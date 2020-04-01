@@ -20,10 +20,26 @@ fn main() {
             ),
         ],
     );
+
+    let mut div_expr = Expression::Operator(
+        Function::Div,
+        vec![
+            Expression::Operator(
+                Function::Div,
+                vec![
+                    Expression::Operand(Value::Variable('a')),
+                    Expression::Operand(Value::Variable('b')),
+                ],
+            ),
+            Expression::Operand(Value::Variable('c')),
+        ],
+    );
+    div_expr.simplify_rational_1();
     expr.factor_subs();
     expr.factor_negs();
     println!("{}", expr);
     println!("{}", expr.flatten());
+    println!("{}", div_expr);
 }
 impl Expression {
     fn factor_negs(&mut self) {
@@ -101,6 +117,38 @@ impl Expression {
                 Expression::Operator(op, exprs.into_iter().map(Expression::flatten).collect())
             }
             other => other,
+        }
+    }
+
+    fn simplify_rational_1(&mut self) {
+        match self {
+            Expression::Operator(op @ Function::Div, exprs) => {
+                if exprs.len() != 2 {
+                    panic!("")
+                } else {
+                    let lhs = exprs[0].clone();
+
+                    if let Expression::Operator(Function::Div, mut expr) = lhs.clone() {
+                        if expr.len() != 2 {
+                            panic!()
+                        } else {
+                            let mut rhs = exprs.pop().unwrap();
+                            rhs.simplify_rational_1();
+                            exprs.pop();
+                            let mut left = expr.remove(0);
+                            expr[0].simplify_rational_1();
+                            left.simplify_rational_1();
+                            expr.insert(0, rhs);
+                            exprs.push(left);
+                            exprs.push(Expression::Operator(Function::Mul, expr));
+                        }
+                    }
+                }
+            }
+            Expression::Operator(_, exprs) => {
+                exprs.iter_mut().for_each(Expression::simplify_rational_1)
+            }
+            _ => (),
         }
     }
 }
