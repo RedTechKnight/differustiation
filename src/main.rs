@@ -1,23 +1,12 @@
 use std::fmt;
 
 fn main() {
+    let var = |n: char| Expression::Operand(Value::Variable(n));
     let mut expr = Expression::Operator(
         Function::Add,
         vec![
-            Expression::Operator(
-                Function::Add,
-                vec![
-                    Expression::Operand(Value::Variable('a')),
-                    Expression::Operand(Value::Variable('b')),
-                ],
-            ),
-            Expression::Operator(
-                Function::Add,
-                vec![
-                    Expression::Operand(Value::Variable('c')),
-                    Expression::Operand(Value::Variable('d')),
-                ],
-            ),
+            Expression::Operator(Function::Add, vec![var('a'), var('b')]),
+            Expression::Operator(Function::Add, vec![var('c'), var('d')]),
         ],
     );
 
@@ -34,12 +23,22 @@ fn main() {
             Expression::Operand(Value::Variable('c')),
         ],
     );
+
+    let mut div_expr_b = Expression::Operator(
+        Function::Div,
+        vec![
+            var('a'),
+            Expression::Operator(Function::Mul, vec![var('b'), var('c')]),
+        ],
+    );
+    div_expr_b.simplify_rational_2();
     div_expr.simplify_rational_1();
     expr.factor_subs();
     expr.factor_negs();
     println!("{}", expr);
     println!("{}", expr.flatten());
     println!("{}", div_expr);
+    println!("{}", div_expr_b);
 }
 impl Expression {
     fn factor_negs(&mut self) {
@@ -147,6 +146,44 @@ impl Expression {
             }
             Expression::Operator(_, exprs) => {
                 exprs.iter_mut().for_each(Expression::simplify_rational_1)
+            }
+            _ => (),
+        }
+    }
+
+    fn simplify_rational_2(&mut self) {
+        match self {
+            Expression::Operator(Function::Div, exprs) => {
+                exprs.iter_mut().for_each(Expression::simplify_rational_2);
+                if exprs.len() != 2 {
+                    panic!()
+                } else {
+                    let pick_one = |v: &mut Expression| match v {
+                        Expression::Operator(Function::Div, exprs) => {
+                            exprs.iter_mut().for_each(Expression::simplify_rational_2);
+                            if exprs.len() != 2 {
+                                return None;
+                            }
+                            let result = exprs.remove(1);
+                            *v = exprs.remove(0);
+                            Some(result)
+                        }
+                        _ => None,
+                    };
+
+                    let a = pick_one(&mut exprs[1]);
+
+                    match a {
+                        Some(a) => {
+                            let lhs = exprs.remove(0);
+                            exprs.insert(0, Expression::Operator(Function::Mul, vec![lhs, a]))
+                        }
+                        None => (),
+                    }
+                }
+            }
+            Expression::Operator(_, exprs) => {
+                exprs.iter_mut().for_each(Expression::simplify_rational_2);
             }
             _ => (),
         }
