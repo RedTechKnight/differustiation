@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 
 fn main() {
     let var = |n: char| Expression::Operand(Value::Variable(n));
@@ -39,7 +41,7 @@ fn main() {
             var('b'),
             var('c'),
             Expression::Operator(Function::Div, vec![var('x'), var('y')]),
-	    Expression::Operator(Function::Div,vec![var('z'),var('w')]),
+            Expression::Operator(Function::Div, vec![var('a'), var('w')]),
             var('d'),
         ],
     );
@@ -47,6 +49,8 @@ fn main() {
     div_expr_c.simplify_rational_3();
     div_expr_c.simplify_rational_2();
     div_expr_c.simplify_rational_1();
+    div_expr_c.explicit_exponents();
+    div_expr_c.collect_exponents();
     div_expr_b.simplify_rational_2();
     div_expr.simplify_rational_1();
     expr.factor_subs();
@@ -55,7 +59,7 @@ fn main() {
     println!("{}", expr.flatten());
     println!("{}", div_expr);
     println!("{}", div_expr_b);
-    println!("{}",div_expr_c);
+    println!("{}", div_expr_c);
 }
 impl Expression {
     fn factor_negs(&mut self) {
@@ -236,9 +240,119 @@ impl Expression {
             _ => (),
         }
     }
+
+    fn explicit_exponents(&mut self) {
+        match self {
+            Expression::Operator(Function::Mul, exprs) => {
+                exprs.iter_mut().for_each(Expression::explicit_exponents);
+                let is_not_exponent = |expr: &Expression| {
+                    if let Expression::Operator(Function::Exp, _) = expr {
+                        false
+                    } else {
+                        true
+                    }
+                };
+                exprs
+                    .iter_mut()
+                    .filter(|x| is_not_exponent(x))
+                    .for_each(|x| {
+                        *x = Expression::Operator(
+                            Function::Exp,
+                            vec![x.clone(), Expression::Operand(Value::Integer(1))],
+                        )
+                    });
+            }
+            Expression::Operator(_, exprs) => {
+                exprs.iter_mut().for_each(Expression::explicit_exponents)
+            }
+            _ => (),
+        }
+    }
+
+    fn collect_exponents(&mut self) {
+        match self {
+            Expression::Operator(Function::Mul, exprs) => {
+                exprs.iter_mut().for_each(Expression::collect_exponents);
+                let mut values = Vec::new();
+                for expr in exprs.iter() {
+                    match expr {
+                        Expression::Operator(Function::Exp, e) => {
+                            if e.len() != 2 {
+                                panic!()
+                            } else {
+                                if !values.iter().any(|x| *x == &e[0]) {
+                                    values.push(&e[0])
+                                }
+                            }
+                        }
+                        _ => (),
+                    }
+                }
+
+                let mut groups = Vec::new();
+                let same_base = |expr: &Expression, rhs: &Expression| match expr {
+                    Expression::Operator(Function::Exp, exprs) => {
+                        if exprs.len() != 2 {
+                            panic!()
+                        } else {
+                            &exprs[0] == rhs
+                        }
+                    }
+                    _ => false,
+                };
+                for expr in values.iter() {
+                    groups.push(
+                        exprs
+                            .iter()
+                            .filter(|x| same_base(x, expr))
+                            .cloned()
+                            .collect::<Vec<Expression>>(),
+                    );
+                }
+                let combine_exponents = |expr_vec: &mut Vec<Expression>| {
+                    let base = match &mut expr_vec[0] {
+                        Expression::Operator(Function::Exp, exprs) => {
+                            if exprs.len() != 2 {
+                                None
+                            } else {
+                                Some(exprs[0].clone())
+                            }
+                        }
+                        _ => None,
+                    };
+                    expr_vec.iter_mut().for_each(|x| match x {
+                        Expression::Operator(Function::Exp, exprs) => {
+                            if exprs.len() != 2 {
+                                panic!()
+                            } else {
+                                exprs.remove(0);
+				exprs.iter_mut().for_each(Expression::collect_exponents);
+				*x = exprs.remove(0);
+                            }
+                        }
+                        _ => (),
+                    });
+		    let mut expon = Vec::new();
+		    expon.append(expr_vec);
+		    if let Some(b) = base {
+			return Expression::Operator(Function::Exp, vec![b,Expression::Operator(Function::Add,expon)]);
+		    } else {
+			panic!()
+		    }
+                };
+
+		*exprs = groups.into_iter().map(|mut x| combine_exponents(&mut x)).collect();
+                ()
+            }
+            Expression::Operator(_, exprs) => {
+                exprs.iter_mut().for_each(Expression::collect_exponents)
+            }
+            _ => (),
+        }
+    }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, PartialOrd)]
 enum Value {
     Integer(i128),
     Real(f64),
@@ -259,7 +373,7 @@ impl fmt::Display for Value {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum Function {
     Add,
     Mul,
@@ -292,6 +406,51 @@ enum Expression {
     Operator(Function, Vec<Expression>),
 }
 
+impl PartialEq for Expression {
+    fn eq(&self, other: &Self) -> bool {
+        match self {
+            Expression::Operand(lhs) => match other {
+                Expression::Operand(rhs) => lhs == rhs,
+                _ => false,
+            },
+            Expression::Operator(l_fun, l_exprs) => match other {
+                Expression::Operator(r_fun, r_exprs) => {
+                    l_fun == r_fun && l_exprs.iter().eq(r_exprs.iter())
+                }
+                _ => false,
+            },
+        }
+    }
+}
+
+impl Eq for Expression {}
+
+impl PartialOrd for Expression {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match self {
+            Expression::Operand(lhs) => match other {
+                Expression::Operand(rhs) => lhs.partial_cmp(rhs),
+                _ => Some(1.cmp(&2)),
+            },
+            Expression::Operator(l_fun, l_exprs) => match other {
+                Expression::Operator(r_fun, r_exprs) => Some(
+                    l_fun
+                        .partial_cmp(r_fun)
+                        .unwrap()
+                        .then(l_exprs.iter().partial_cmp(r_exprs.iter()).unwrap()),
+                ),
+                _ => Some(2.cmp(&1)),
+            },
+        }
+    }
+}
+
+impl Ord for Expression {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+
 impl fmt::Display for Expression {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
@@ -300,7 +459,7 @@ impl fmt::Display for Expression {
             match self {
                 Expression::Operand(t) => format!("{}", t),
                 Expression::Operator(fun, exprs) => format!(
-                    "{} ({})",
+                    "({} {})",
                     fun,
                     exprs.iter().map(|x| format!("{} ", x)).collect::<String>()
                 ),
