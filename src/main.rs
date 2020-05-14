@@ -1,6 +1,8 @@
+use std::fmt;
+
 fn main() {
     println!(
-        "{:?}",
+        "{}",
         Expression::binary_expression(
             Operator::Mul,
             Expression::real_expression(1.232),
@@ -29,12 +31,27 @@ fn main() {
         .explicit_coefficients()
         .explicit_exponents()
     );
+    let a = Expression::variable_expression('a');
+    println!("{}", Expression::Variadic(Operator::Add, vec![a.clone(), a.clone(), a.clone(), a.clone()]));
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 enum Literal {
     Integer(i128),
     Real(f64),
+}
+
+impl fmt::Display for Literal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Literal::Integer(i) => i.to_string(),
+                Literal::Real(fl) => fl.to_string(),
+            }
+        )
+    }
 }
 
 impl Literal {
@@ -85,6 +102,15 @@ enum Term {
     Variable(char),
 }
 
+impl fmt::Display for Term {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Term::Numeric(n) => write!(f, "{}", n),
+            Term::Variable(c) => write!(f, "{}", c),
+        }
+    }
+}
+
 impl Term {
     fn real_term(a: f64) -> Term {
         Term::Numeric(Literal::new_real_literal(a))
@@ -131,12 +157,43 @@ enum Operator {
     Custom(String),
 }
 
+impl fmt::Display for Operator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Operator::Paren => write!(f, ""),
+            Operator::Neg => write!(f, "-"),
+            Operator::Add => write!(f, "+"),
+            Operator::Mul => write!(f, "*"),
+            Operator::Sub => write!(f, "-"),
+            Operator::Div => write!(f, "/"),
+            Operator::Exp => write!(f, "^"),
+            Operator::Custom(string) => write!(f, "{}", string),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialOrd, PartialEq)]
 enum Expression {
     Lit(Term),
     Unary(Operator, Box<Expression>),
     Binary(Operator, Box<Expression>, Box<Expression>),
     Variadic(Operator, Vec<Expression>),
+}
+
+impl fmt::Display for Expression {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Expression::Lit(t) => write!(f, "{}", t),
+            Expression::Unary(op, a) => write!(f, "({} {})", op, *a),
+            Expression::Binary(op, a, b) => write!(f, "({} {} {})", op, *a, *b),
+            Expression::Variadic(op, exprs) => write!(
+                f,
+                "({} {})",
+                op,
+                exprs.into_iter().map(|x| x.to_string() + " " ).collect::<String>()
+            ),
+        }
+    }
 }
 
 impl Expression {
