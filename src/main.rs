@@ -32,7 +32,13 @@ fn main() {
         .explicit_exponents()
     );
     let a = Expression::variable_expression('a');
-    println!("{}", Expression::Variadic(Operator::Add, vec![a.clone(), a.clone(), a.clone(), a.clone()]));
+    println!(
+        "{}",
+        Expression::Variadic(
+            Operator::Add,
+            vec![a.clone(), a.clone(), a.clone(), a.clone()]
+        )
+    );
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
@@ -190,7 +196,10 @@ impl fmt::Display for Expression {
                 f,
                 "({} {})",
                 op,
-                exprs.into_iter().map(|x| x.to_string() + " " ).collect::<String>()
+                exprs
+                    .into_iter()
+                    .map(|x| x.to_string() + " ")
+                    .collect::<String>()
             ),
         }
     }
@@ -249,6 +258,17 @@ impl Expression {
         None
     }
 
+    fn recurse<F: Fn(Expression) -> Expression>(self, rec: F) -> Expression {
+        match self {
+            l @ Expression::Lit(_) => l,
+            Expression::Unary(f, a) => Expression::unary_expression(f, rec(*a)),
+            Expression::Binary(f, a, b) => Expression::binary_expression(f, rec(*a), rec(*b)),
+            Expression::Variadic(f, exprs) => {
+                Expression::variadic_expression(f, exprs.into_iter().map(rec).collect())
+            }
+        }
+    }
+
     fn factor_out_neg(self) -> Expression {
         match self {
             Expression::Unary(Operator::Neg, a) => {
@@ -258,15 +278,7 @@ impl Expression {
                     a.factor_out_neg(),
                 );
             }
-            l @ Expression::Lit(_) => l,
-            Expression::Unary(f, a) => Expression::unary_expression(f, a.factor_out_neg()),
-            Expression::Binary(f, a, b) => {
-                Expression::binary_expression(f, a.factor_out_neg(), b.factor_out_neg())
-            }
-            Expression::Variadic(f, exprs) => Expression::variadic_expression(
-                f,
-                exprs.into_iter().map(Expression::factor_out_neg).collect(),
-            ),
+            other => other.recurse(Expression::factor_out_neg),
         }
     }
 
@@ -283,18 +295,7 @@ impl Expression {
                     ),
                 )
             }
-            l @ Expression::Lit(_) => l,
-            Expression::Unary(f, a) => Expression::unary_expression(f, a.factor_out_sub()),
-            Expression::Binary(f, a, b) => {
-                Expression::binary_expression(f, a.factor_out_sub(), b.factor_out_sub())
-            }
-            Expression::Variadic(f, exprs) => Expression::variadic_expression(
-                f,
-                exprs
-                    .into_iter()
-                    .map(Expression::factor_out_sub)
-                    .collect::<Vec<Expression>>(),
-            ),
+            other => other.recurse(Expression::factor_out_sub),
         }
     }
 
@@ -318,14 +319,7 @@ impl Expression {
                 ),
                 (a, b) => Expression::Variadic(Operator::Add, vec![a, b]),
             },
-            l @ Expression::Lit(_) => l,
-            Expression::Unary(f, a) => Expression::unary_expression(f, a.flatten_add()),
-            Expression::Binary(f, a, b) => {
-                Expression::binary_expression(f, a.flatten_add(), b.flatten_add())
-            }
-            Expression::Variadic(f, exprs) => {
-                Expression::Variadic(f, exprs.into_iter().map(Expression::flatten_add).collect())
-            }
+            other => other.recurse(Expression::flatten_add),
         }
     }
 
@@ -349,14 +343,7 @@ impl Expression {
                 ),
                 (a, b) => Expression::Variadic(Operator::Mul, vec![a, b]),
             },
-            l @ Expression::Lit(_) => l,
-            Expression::Unary(f, a) => Expression::unary_expression(f, a.flatten_mul()),
-            Expression::Binary(f, a, b) => {
-                Expression::binary_expression(f, a.flatten_mul(), b.flatten_mul())
-            }
-            Expression::Variadic(f, exprs) => {
-                Expression::Variadic(f, exprs.into_iter().map(Expression::flatten_mul).collect())
-            }
+            other => other.recurse(Expression::flatten_mul),
         }
     }
 
@@ -374,18 +361,7 @@ impl Expression {
                     (a, b) => Expression::binary_expression(Operator::Div, a, b),
                 }
             }
-            l @ Expression::Lit(_) => l,
-            Expression::Unary(f, a) => Expression::unary_expression(f, a.simplify_rational_1()),
-            Expression::Binary(f, a, b) => {
-                Expression::binary_expression(f, a.simplify_rational_1(), b.simplify_rational_1())
-            }
-            Expression::Variadic(f, exprs) => Expression::variadic_expression(
-                f,
-                exprs
-                    .into_iter()
-                    .map(Expression::simplify_rational_1)
-                    .collect(),
-            ),
+	    other => other.recurse(Expression::simplify_rational_1)
         }
     }
 
@@ -403,18 +379,7 @@ impl Expression {
                     (a, b) => Expression::binary_expression(Operator::Div, a, b),
                 }
             }
-            l @ Expression::Lit(_) => l,
-            Expression::Unary(f, a) => Expression::unary_expression(f, a.simplify_rational_2()),
-            Expression::Binary(f, a, b) => {
-                Expression::binary_expression(f, a.simplify_rational_2(), b.simplify_rational_2())
-            }
-            Expression::Variadic(f, exprs) => Expression::variadic_expression(
-                f,
-                exprs
-                    .into_iter()
-                    .map(Expression::simplify_rational_2)
-                    .collect(),
-            ),
+	    other => other.recurse(Expression::simplify_rational_2)
         }
     }
 
@@ -431,11 +396,6 @@ impl Expression {
                     }
                     (a, b) => Expression::binary_expression(Operator::Mul, a, b),
                 }
-            }
-            l @ Expression::Lit(_) => l,
-            Expression::Unary(f, a) => Expression::unary_expression(f, a.simplify_rational_3()),
-            Expression::Binary(f, a, b) => {
-                Expression::binary_expression(f, a.simplify_rational_3(), b.simplify_rational_3())
             }
             Expression::Variadic(Operator::Mul, mut exprs) => {
                 let first_div_node = exprs.iter().enumerate().find(|(_, v)| {
@@ -458,13 +418,7 @@ impl Expression {
                     _ => Expression::variadic_expression(Operator::Mul, exprs),
                 }
             }
-            Expression::Variadic(f, exprs) => Expression::variadic_expression(
-                f,
-                exprs
-                    .into_iter()
-                    .map(Expression::simplify_rational_3)
-                    .collect(),
-            ),
+	    other => other.recurse(Expression::simplify_rational_3)
         }
     }
 
@@ -489,19 +443,8 @@ impl Expression {
                     }
                 }
                 Expression::variadic_expression(Operator::Mul, exprs)
-            }
-            l @ Expression::Lit(_) => l,
-            Expression::Unary(f, a) => Expression::unary_expression(f, a.explicit_exponents()),
-            Expression::Binary(f, a, b) => {
-                Expression::binary_expression(f, a.explicit_exponents(), b.explicit_exponents())
-            }
-            Expression::Variadic(f, exprs) => Expression::variadic_expression(
-                f,
-                exprs
-                    .into_iter()
-                    .map(Expression::explicit_exponents)
-                    .collect(),
-            ),
+            },
+	    other => other.recurse(Expression::explicit_exponents)
         }
     }
 
@@ -527,20 +470,7 @@ impl Expression {
                 }
                 Expression::variadic_expression(Operator::Add, exprs)
             }
-            l @ Expression::Lit(_) => l,
-            Expression::Unary(f, a) => Expression::unary_expression(f, a.explicit_coefficients()),
-            Expression::Binary(f, a, b) => Expression::binary_expression(
-                f,
-                a.explicit_coefficients(),
-                b.explicit_coefficients(),
-            ),
-            Expression::Variadic(f, exprs) => Expression::variadic_expression(
-                f,
-                exprs
-                    .into_iter()
-                    .map(Expression::explicit_coefficients)
-                    .collect(),
-            ),
+	    other => other.recurse(Expression::explicit_coefficients)
         }
     }
 }
