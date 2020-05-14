@@ -6,11 +6,17 @@ fn main() {
     println!(
         "{:?}",
         Expression::binary_expression(
-            Operator::Sub,
-            Expression::real_expression(1.0),
+            Operator::Mul,
+            Expression::binary_expression(
+                Operator::Mul,
+                Expression::integer_expression(20),
+                Expression::real_expression(20.0)
+            ),
             Expression::integer_expression(230)
         )
-        .factor_out_sub()
+            .factor_out_sub()
+	    .flatten_add()
+	    .flatten_mul()
     );
 }
 
@@ -224,5 +230,65 @@ impl Expression {
         }
     }
 
-    
+    fn flatten_add(self) -> Expression {
+        match self {
+            Expression::Binary(Operator::Add, a, b) => match (a.flatten_add(), b.flatten_add()) {
+                (
+                    Expression::Variadic(Operator::Add, a),
+                    Expression::Variadic(Operator::Add, b),
+                ) => Expression::variadic_expression(
+                    Operator::Add,
+                    a.into_iter().chain(b.into_iter()).collect(),
+                ),
+                (Expression::Variadic(Operator::Add, a), b) => Expression::variadic_expression(
+                    Operator::Add,
+                    a.into_iter().chain(vec![b].into_iter()).collect(),
+                ),
+                (a, Expression::Variadic(Operator::Add, b)) => Expression::variadic_expression(
+                    Operator::Add,
+                    b.into_iter().chain(vec![a].into_iter()).collect(),
+                ),
+                (a, b) => Expression::Variadic(Operator::Add, vec![a, b]),
+            },
+            l @ Expression::Lit(_) => l,
+            Expression::Unary(f, a) => Expression::unary_expression(f, a.flatten_add()),
+            Expression::Binary(f, a, b) => {
+                Expression::binary_expression(f, a.flatten_add(), b.flatten_add())
+            }
+            Expression::Variadic(f, exprs) => {
+                Expression::Variadic(f, exprs.into_iter().map(Expression::flatten_add).collect())
+            }
+        }
+    }
+
+    fn flatten_mul(self) -> Expression {
+        match self {
+            Expression::Binary(Operator::Mul, a, b) => match (a.flatten_mul(), b.flatten_mul()) {
+                (
+                    Expression::Variadic(Operator::Mul, a),
+                    Expression::Variadic(Operator::Mul, b),
+                ) => Expression::variadic_expression(
+                    Operator::Mul,
+                    a.into_iter().chain(b.into_iter()).collect(),
+                ),
+                (Expression::Variadic(Operator::Mul, a), b) => Expression::variadic_expression(
+                    Operator::Mul,
+                    a.into_iter().chain(vec![b].into_iter()).collect(),
+                ),
+                (a, Expression::Variadic(Operator::Mul, b)) => Expression::variadic_expression(
+                    Operator::Mul,
+                    b.into_iter().chain(vec![a].into_iter()).collect(),
+                ),
+                (a, b) => Expression::Variadic(Operator::Mul, vec![a, b]),
+            },
+            l @ Expression::Lit(_) => l,
+            Expression::Unary(f, a) => Expression::unary_expression(f, a.flatten_mul()),
+            Expression::Binary(f, a, b) => {
+                Expression::binary_expression(f, a.flatten_mul(), b.flatten_mul())
+            }
+            Expression::Variadic(f, exprs) => {
+                Expression::Variadic(f, exprs.into_iter().map(Expression::flatten_mul).collect())
+            }
+        }
+    }
 }
