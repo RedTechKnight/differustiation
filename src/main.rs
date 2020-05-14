@@ -10,7 +10,11 @@ fn main() {
                 Expression::binary_expression(
                     Operator::Div,
                     Expression::real_expression(23.33),
-                    Expression::integer_expression(123)
+                    Expression::binary_expression(
+                        Operator::Add,
+                        Expression::real_expression(1.0),
+                        Expression::variable_expression('a')
+                    )
                 )
             )
         )
@@ -21,6 +25,9 @@ fn main() {
         .simplify_rational_2()
         .simplify_rational_3()
         .flatten_mul()
+        .explicit_exponents()
+        .explicit_coefficients()
+        .explicit_exponents()
     );
 }
 
@@ -399,6 +406,82 @@ impl Expression {
                 exprs
                     .into_iter()
                     .map(Expression::simplify_rational_3)
+                    .collect(),
+            ),
+        }
+    }
+
+    fn explicit_exponents(self) -> Expression {
+        match self {
+            Expression::Variadic(Operator::Mul, mut exprs) => {
+                exprs = exprs
+                    .into_iter()
+                    .map(Expression::explicit_exponents)
+                    .collect();
+                for expr in exprs.iter_mut() {
+                    match expr {
+                        Expression::Binary(Operator::Exp, _, _) => (),
+                        expr => {
+                            let base = std::mem::replace(expr, Expression::integer_expression(1));
+                            *expr = Expression::binary_expression(
+                                Operator::Exp,
+                                base,
+                                Expression::integer_expression(1),
+                            );
+                        }
+                    }
+                }
+                Expression::variadic_expression(Operator::Mul, exprs)
+            }
+            l @ Expression::Lit(_) => l,
+            Expression::Unary(f, a) => Expression::unary_expression(f, a.explicit_exponents()),
+            Expression::Binary(f, a, b) => {
+                Expression::binary_expression(f, a.explicit_exponents(), b.explicit_exponents())
+            }
+            Expression::Variadic(f, exprs) => Expression::variadic_expression(
+                f,
+                exprs
+                    .into_iter()
+                    .map(Expression::explicit_exponents)
+                    .collect(),
+            ),
+        }
+    }
+
+    fn explicit_coefficients(self) -> Expression {
+        match self {
+            Expression::Variadic(Operator::Add, mut exprs) => {
+                exprs = exprs
+                    .into_iter()
+                    .map(Expression::explicit_coefficients)
+                    .collect();
+                for expr in exprs.iter_mut() {
+                    match expr {
+                        Expression::Binary(Operator::Mul, _, _) => (),
+                        expr => {
+                            let base = std::mem::replace(expr, Expression::integer_expression(1));
+                            *expr = Expression::binary_expression(
+                                Operator::Mul,
+                                Expression::integer_expression(1),
+                                base,
+                            );
+                        }
+                    }
+                }
+                Expression::variadic_expression(Operator::Add, exprs)
+            }
+            l @ Expression::Lit(_) => l,
+            Expression::Unary(f, a) => Expression::unary_expression(f, a.explicit_coefficients()),
+            Expression::Binary(f, a, b) => Expression::binary_expression(
+                f,
+                a.explicit_coefficients(),
+                b.explicit_coefficients(),
+            ),
+            Expression::Variadic(f, exprs) => Expression::variadic_expression(
+                f,
+                exprs
+                    .into_iter()
+                    .map(Expression::explicit_coefficients)
                     .collect(),
             ),
         }
