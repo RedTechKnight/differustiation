@@ -6,7 +6,7 @@ fn main() {
     println!(
         "{:?}",
         Expression::binary_expression(
-            Operator::Div,
+            Operator::Mul,
             Expression::real_expression(1.232),
             Expression::binary_expression(
                 Operator::Div,
@@ -23,6 +23,7 @@ fn main() {
         .flatten_mul()
         .simplify_rational_1()
         .simplify_rational_2()
+        .simplify_rational_3()
         .flatten_mul()
     );
 }
@@ -352,6 +353,35 @@ impl Expression {
                 exprs
                     .into_iter()
                     .map(Expression::simplify_rational_2)
+                    .collect(),
+            ),
+        }
+    }
+
+    fn simplify_rational_3(self) -> Expression {
+        match self {
+            Expression::Binary(Operator::Mul, num, denom) => {
+                match (num.simplify_rational_3(), denom.simplify_rational_3()) {
+                    (num, Expression::Binary(Operator::Div, b_num, b_denom)) => {
+                        Expression::binary_expression(
+                            Operator::Div,
+                            Expression::binary_expression(Operator::Mul, num, *b_num),
+                            *b_denom,
+                        )
+                    }
+                    (a, b) => Expression::binary_expression(Operator::Mul, a, b),
+                }
+            }
+            l @ Expression::Lit(_) => l,
+            Expression::Unary(f, a) => Expression::unary_expression(f, a.simplify_rational_3()),
+            Expression::Binary(f, a, b) => {
+                Expression::binary_expression(f, a.simplify_rational_3(), b.simplify_rational_3())
+            }
+            Expression::Variadic(f, exprs) => Expression::variadic_expression(
+                f,
+                exprs
+                    .into_iter()
+                    .map(Expression::simplify_rational_3)
                     .collect(),
             ),
         }
