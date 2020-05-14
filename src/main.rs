@@ -2,637 +2,95 @@ use std::collections::HashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
-fn main() {
-    let st = String::from("Hello!");
-    println!("{}",&st[0..2]);
-    let var = |n: char| Expression::Operand(Value::Variable(n));
-    let mut expr = Expression::Operator(
-        Function::Add,
-        vec![
-            Expression::Operator(Function::Add, vec![var('a'), var('b')]),
-            Expression::Operator(Function::Add, vec![var('c'), var('d')]),
-        ],
-    );
-
-    let mut div_expr = Expression::Operator(
-        Function::Div,
-        vec![
-            Expression::Operator(
-                Function::Div,
-                vec![
-                    Expression::Operand(Value::Variable('a')),
-                    Expression::Operand(Value::Variable('b')),
-                ],
-            ),
-            Expression::Operand(Value::Variable('c')),
-        ],
-    );
-
-    let mut div_expr_b = Expression::Operator(
-        Function::Div,
-        vec![
-            var('a'),
-            Expression::Operator(Function::Mul, vec![var('b'), var('c')]),
-        ],
-    );
-
-    let mut div_expr_c = Expression::Operator(
-        Function::Mul,
-        vec![
-            var('a'),
-            var('b'),
-            var('c'),
-            Expression::Operator(Function::Div, vec![var('x'), var('y')]),
-            Expression::Operator(Function::Div, vec![var('a'), var('w')]),
-            var('d'),
-        ],
-    );
-    div_expr_c.simplify_rational_3();
-    div_expr_c.simplify_rational_3();
-    div_expr_c.simplify_rational_2();
-    div_expr_c.simplify_rational_1();
-    div_expr_c.explicit_exponents();
-    div_expr_c.collect_exponents();
-    div_expr_c.fold_constants();
-    div_expr_b.simplify_rational_2();
-    div_expr.simplify_rational_1();
-    expr.factor_subs();
-    expr.factor_negs();
-    println!("{}", expr);
-    println!("{}", expr.flatten());
-    println!("{}", div_expr);
-    println!("{}", div_expr_b);
-    println!("{}", div_expr_c);
-}
+fn main() {}
 
 
-impl Expression {
-    fn factor_negs(&mut self) {
-        match self {
-            Expression::Operator(op @ Function::Neg, exprs) => {
-                if exprs.len() != 1 {
-                    panic!("")
-                } else {
-                    exprs[0].factor_negs();
-                    exprs.insert(0, Expression::Operand(Value::Integer(-1)));
-                    *op = Function::Mul;
-                }
-            }
-            Expression::Operator(_, exprs) => exprs.iter_mut().for_each(Expression::factor_negs),
-            _ => (),
-        }
-    }
-
-    fn factor_subs(&mut self) {
-        match self {
-            Expression::Operator(op @ Function::Sub, exprs) => {
-                if exprs.len() != 2 {
-                    panic!("")
-                } else {
-                    exprs.iter_mut().for_each(Expression::factor_subs);
-                    let rhs = exprs.pop().unwrap();
-                    exprs.push(Expression::Operator(
-                        Function::Mul,
-                        vec![Expression::Operand(Value::Integer(-1)), rhs],
-                    ));
-                    *op = Function::Add;
-                }
-            }
-            Expression::Operator(_, exprs) => exprs.iter_mut().for_each(Expression::factor_subs),
-
-            _ => (),
-        };
-    }
-
-    fn flatten(self) -> Self {
-        match self {
-            Expression::Operator(op @ Function::Add, exprs)
-            | Expression::Operator(op @ Function::Mul, exprs) => {
-                let get_operands = move |x| {
-                    if let Expression::Operator(fun, operands) = x {
-                        if op == fun {
-                            Some(operands)
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                };
-                let (add, non_add) = exprs.into_iter().partition::<Vec<_>, _>(|expr| match expr {
-                    Expression::Operator(fun, _) if *fun == op => true,
-                    _ => false,
-                });
-                let add_ops = add
-                    .into_iter()
-                    .filter_map(get_operands)
-                    .flatten()
-                    .collect::<Vec<_>>();
-
-                Expression::Operator(
-                    op,
-                    non_add
-                        .into_iter()
-                        .chain(add_ops)
-                        .map(Expression::flatten)
-                        .collect(),
-                )
-            }
-            Expression::Operator(op, exprs) => {
-                Expression::Operator(op, exprs.into_iter().map(Expression::flatten).collect())
-            }
-            other => other,
-        }
-    }
-
-    fn simplify_rational_1(&mut self) {
-        match self {
-            Expression::Operator(op @ Function::Div, exprs) => {
-                if exprs.len() != 2 {
-                    panic!("")
-                } else {
-                    let lhs = exprs[0].clone();
-
-                    if let Expression::Operator(Function::Div, mut expr) = lhs.clone() {
-                        if expr.len() != 2 {
-                            panic!()
-                        } else {
-                            let mut rhs = exprs.pop().unwrap();
-                            rhs.simplify_rational_1();
-                            exprs.pop();
-                            let mut left = expr.remove(0);
-                            expr[0].simplify_rational_1();
-                            left.simplify_rational_1();
-                            expr.insert(0, rhs);
-                            exprs.push(left);
-                            exprs.push(Expression::Operator(Function::Mul, expr));
-                        }
-                    }
-                }
-            }
-            Expression::Operator(_, exprs) => {
-                exprs.iter_mut().for_each(Expression::simplify_rational_1)
-            }
-            _ => (),
-        }
-    }
-
-    fn simplify_rational_2(&mut self) {
-        match self {
-            Expression::Operator(Function::Div, exprs) => {
-                exprs.iter_mut().for_each(Expression::simplify_rational_2);
-                if exprs.len() != 2 {
-                    panic!()
-                } else {
-                    let pick_one = |v: &mut Expression| match v {
-                        Expression::Operator(Function::Div, exprs) => {
-                            exprs.iter_mut().for_each(Expression::simplify_rational_2);
-                            if exprs.len() != 2 {
-                                return None;
-                            }
-                            let result = exprs.remove(1);
-                            *v = exprs.remove(0);
-                            Some(result)
-                        }
-                        _ => None,
-                    };
-
-                    let a = pick_one(&mut exprs[1]);
-
-                    match a {
-                        Some(a) => {
-                            let lhs = exprs.remove(0);
-                            exprs.insert(0, Expression::Operator(Function::Mul, vec![lhs, a]))
-                        }
-                        None => (),
-                    }
-                }
-            }
-            Expression::Operator(_, exprs) => {
-                exprs.iter_mut().for_each(Expression::simplify_rational_2);
-            }
-            _ => (),
-        }
-    }
-
-    fn simplify_rational_3(&mut self) {
-        match self {
-            Expression::Operator(op @ Function::Mul, exprs) => {
-                exprs.iter_mut().for_each(Expression::simplify_rational_3);
-                let pick_one = |v: &mut Expression| match v {
-                    Expression::Operator(Function::Div, exprs) => {
-                        if exprs.len() != 2 {
-                            return None;
-                        }
-                        let result = exprs.remove(1);
-                        *v = exprs.remove(0);
-                        Some(result)
-                    }
-                    _ => None,
-                };
-                let denom = exprs.iter_mut().find_map(pick_one);
-                if let Some(expr) = denom {
-                    let mut result = Vec::new();
-                    result.append(exprs);
-                    exprs.push(Expression::Operator(Function::Mul, result));
-                    exprs.push(expr);
-                    *op = Function::Div;
-                }
-            }
-            Expression::Operator(_, exprs) => {
-                exprs.iter_mut().for_each(Expression::simplify_rational_3)
-            }
-            _ => (),
-        }
-    }
-
-    fn explicit_exponents(&mut self) {
-        match self {
-            Expression::Operator(Function::Mul, exprs) => {
-                exprs.iter_mut().for_each(Expression::explicit_exponents);
-                let is_not_exponent = |expr: &Expression| {
-                    if let Expression::Operator(Function::Exp, _) = expr {
-                        false
-                    } else {
-                        true
-                    }
-                };
-                exprs
-                    .iter_mut()
-                    .filter(|x| is_not_exponent(x))
-                    .for_each(|x| {
-                        *x = Expression::Operator(
-                            Function::Exp,
-                            vec![x.clone(), Expression::Operand(Value::Integer(1))],
-                        )
-                    });
-            }
-            Expression::Operator(_, exprs) => {
-                exprs.iter_mut().for_each(Expression::explicit_exponents)
-            }
-            _ => (),
-        }
-    }
-
-    fn collect_exponents(&mut self) {
-        match self {
-            Expression::Operator(Function::Mul, exprs) => {
-                exprs.iter_mut().for_each(Expression::collect_exponents);
-                let mut values = Vec::new();
-                for expr in exprs.iter() {
-                    match expr {
-                        Expression::Operator(Function::Exp, e) => {
-                            if e.len() != 2 {
-                                panic!()
-                            } else {
-                                if !values.iter().any(|x| *x == &e[0]) {
-                                    values.push(&e[0])
-                                }
-                            }
-                        }
-                        _ => (),
-                    }
-                }
-
-                let mut groups = Vec::new();
-                let same_base = |expr: &Expression, rhs: &Expression| match expr {
-                    Expression::Operator(Function::Exp, exprs) => {
-                        if exprs.len() != 2 {
-                            panic!()
-                        } else {
-                            &exprs[0] == rhs
-                        }
-                    }
-                    _ => false,
-                };
-                for expr in values.iter() {
-                    groups.push(
-                        exprs
-                            .iter()
-                            .filter(|x| same_base(x, expr))
-                            .cloned()
-                            .collect::<Vec<Expression>>(),
-                    );
-                }
-                let combine_exponents = |expr_vec: &mut Vec<Expression>| {
-                    let base = match &mut expr_vec[0] {
-                        Expression::Operator(Function::Exp, exprs) => {
-                            if exprs.len() != 2 {
-                                None
-                            } else {
-                                Some(exprs[0].clone())
-                            }
-                        }
-                        _ => None,
-                    };
-                    expr_vec.iter_mut().for_each(|x| match x {
-                        Expression::Operator(Function::Exp, exprs) => {
-                            if exprs.len() != 2 {
-                                panic!()
-                            } else {
-                                exprs.remove(0);
-                                exprs.iter_mut().for_each(Expression::collect_exponents);
-                                *x = exprs.remove(0);
-                            }
-                        }
-                        _ => (),
-                    });
-                    let mut expon = Vec::new();
-                    expon.append(expr_vec);
-                    if let Some(b) = base {
-                        return Expression::Operator(
-                            Function::Exp,
-                            vec![b, Expression::Operator(Function::Add, expon)],
-                        );
-                    } else {
-                        panic!()
-                    }
-                };
-
-                *exprs = groups
-                    .into_iter()
-                    .map(|mut x| combine_exponents(&mut x))
-                    .collect();
-
-                ()
-            }
-            Expression::Operator(_, exprs) => {
-                exprs.iter_mut().for_each(Expression::collect_exponents)
-            }
-            _ => (),
-        }
-    }
-
-    fn fold_constants(&mut self) {
-        match self {
-            Expression::Operator(Function::Add, exprs) => {
-                exprs.iter_mut().for_each(Expression::fold_constants);
-                let is_const = |expr: &Expression| match expr {
-                    Expression::Operand(Value::Integer(_))
-                    | Expression::Operand(Value::Real(_)) => true,
-                    _ => false,
-                };
-                let consts = exprs
-                    .iter()
-                    .filter(|x| is_const(x))
-                    .cloned()
-                    .map(|x| match x {
-                        Expression::Operand(op) => op,
-                        _ => panic!(),
-                    })
-                    .collect::<Vec<_>>();
-                let fold_consts = |const_vec: Vec<Value>| {
-                    const_vec
-                        .into_iter()
-                        .fold(Value::Integer(0), |acc, x| match acc {
-                            Value::Real(f) => match x {
-                                Value::Real(g) => Value::Real(f + g),
-                                Value::Integer(g) => Value::Real(f + (g as f64)),
-                                _ => panic!("Impossible!"),
-                            },
-                            Value::Integer(f) => match x {
-                                Value::Real(g) => Value::Real((f as f64) + g),
-                                Value::Integer(g) => Value::Integer(f + g),
-                                _ => panic!("Impossible!"),
-                            },
-                            _ => panic!("Impossible!"),
-                        })
-                };
-                *exprs = exprs.iter().filter(|x| !is_const(x)).cloned().collect();
-                exprs.push(Expression::Operand(fold_consts(consts)));
-            }
-            Expression::Operator(Function::Mul, exprs) => {
-                exprs.iter_mut().for_each(Expression::fold_constants);
-                let is_const = |expr: &Expression| match expr {
-                    Expression::Operand(Value::Integer(_))
-                    | Expression::Operand(Value::Real(_)) => true,
-                    _ => false,
-                };
-                let consts = exprs
-                    .iter()
-                    .filter(|x| is_const(x))
-                    .cloned()
-                    .map(|x| match x {
-                        Expression::Operand(op) => op,
-                        _ => panic!(),
-                    })
-                    .collect::<Vec<_>>();
-                let fold_consts = |const_vec: Vec<Value>| {
-                    const_vec
-                        .into_iter()
-                        .fold(Value::Integer(1), |acc, x| match acc {
-                            Value::Real(f) => match x {
-                                Value::Real(g) => Value::Real(f * g),
-                                Value::Integer(g) => Value::Real(f * (g as f64)),
-                                _ => panic!("Impossible!"),
-                            },
-                            Value::Integer(f) => match x {
-                                Value::Real(g) => Value::Real((f as f64) * g),
-                                Value::Integer(g) => Value::Integer(f * g),
-                                _ => panic!("Impossible!"),
-                            },
-                            _ => panic!("Impossible!"),
-                        })
-                };
-                *exprs = exprs.iter().filter(|x| !is_const(x)).cloned().collect();
-                exprs.push(Expression::Operand(fold_consts(consts)));
-            }
-            Expression::Operator(_, exprs) => exprs.iter_mut().for_each(Expression::fold_constants),
-            _ => (),
-        }
-    }
-    fn simplify_constants(&mut self) {
-        match self {
-            Expression::Operator(Function::Mul, exprs) => {
-                if exprs.contains(&Expression::Operand(Value::Integer(0))) {
-                    *self = Expression::Operand(Value::Integer(0));
-                    return ();
-                }
-                if exprs.len() == 1 {
-                    *self = exprs[0].clone();
-                    return ();
-                }
-                *exprs = exprs
-                    .iter()
-                    .cloned()
-                    .filter_map(|x| match x {
-                        Expression::Operand(Value::Integer(1)) => None,
-                        Expression::Operand(Value::Real(f)) if f == 1.0 => None,
-                        _ => Some(x),
-                    })
-                    .collect();
-            }
-            Expression::Operator(Function::Add, exprs) => {
-                if exprs.len() == 1 {
-                    *self = exprs[0].clone();
-                    return ();
-                }
-
-                *exprs = exprs
-                    .iter()
-                    .cloned()
-                    .filter_map(|x| match x {
-                        Expression::Operand(Value::Integer(0)) => None,
-                        Expression::Operand(Value::Real(f)) if f == 0.0 => None,
-                        _ => Some(x),
-                    })
-                    .collect();
-            }
-            Expression::Operator(Function::Exp, exprs) => {
-                if exprs.len() != 2 {
-                    panic!()
-                } else {
-                    match (&exprs[0], &exprs[1]) {
-                        (
-                            Expression::Operand(Value::Integer(0)),
-                            Expression::Operand(Value::Integer(0)),
-                        ) => (),
-
-                        (
-                            Expression::Operand(Value::Integer(0)),
-                            Expression::Operand(Value::Real(f)),
-                        ) if *f == 0.0 => (),
-                        (
-                            Expression::Operand(Value::Real(f)),
-                            Expression::Operand(Value::Integer(0)),
-                        ) if *f == 0.0 => (),
-                        (Expression::Operand(Value::Integer(0)), _) => {
-                            *self = Expression::Operand(Value::Integer(0))
-                        }
-                        (Expression::Operand(Value::Real(f)), _) if *f == 0.0 => {
-                            *self = Expression::Operand(Value::Real(0.0))
-                        }
-                        _ => (),
-                        (_, Expression::Operand(Value::Real(f))) if *f == 0.0 => {
-                            *self = Expression::Operand(Value::Real(1.0))
-                        }
-                        (_, Expression::Operand(Value::Integer(0))) => {
-                            *self = Expression::Operand(Value::Integer(1))
-                        },
-			_ => ()
-                    }
-                }
-            }
-            Expression::Operator(_, exprs) => {
-                exprs.iter_mut().for_each(Expression::simplify_constants)
-            }
-            _ => (),
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, PartialOrd)]
-enum Value {
+#[derive(Clone, Copy, Debug,PartialEq, PartialOrd)]
+enum Literal {
     Integer(i128),
     Real(f64),
-    Variable(char),
 }
 
-impl fmt::Display for Value {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Value::Integer(i) => i.to_string(),
-                Value::Real(f) => f.to_string(),
-                Value::Variable(v) => v.to_string(),
-            }
-        )
+impl Literal {
+    fn new_real_literal(a: f64) -> Literal {
+        Literal::Real(a)
     }
-}
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-enum Function {
-    Add,
-    Mul,
-    Sub,
-    Div,
-    Exp,
-    Neg,
-}
-
-impl fmt::Display for Function {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Function::Add => "+",
-                Function::Mul => "*",
-                Function::Sub => "-",
-                Function::Div => "/",
-                Function::Exp => "^",
-                Function::Neg => "-",
-            }
-        )
+    fn new_integer_literal(a: i128) -> Literal {
+        Literal::Integer(a)
     }
-}
 
-#[derive(Clone)]
-enum Expression {
-    Operand(Value),
-    Operator(Function, Vec<Expression>),
-}
-
-impl PartialEq for Expression {
-    fn eq(&self, other: &Self) -> bool {
-        match self {
-            Expression::Operand(lhs) => match other {
-                Expression::Operand(rhs) => lhs == rhs,
-                _ => false,
-            },
-            Expression::Operator(l_fun, l_exprs) => match other {
-                Expression::Operator(r_fun, r_exprs) => {
-                    l_fun == r_fun && l_exprs.iter().eq(r_exprs.iter())
-                }
-                _ => false,
-            },
+    fn on_reals<F: Fn(f64, f64) -> f64>(f: F, a: Literal, b: Literal) -> Option<Literal> {
+        if let Literal::Real(a) = a {
+            match b {
+		Literal::Real(b) => return Some(Literal::Real(f(a,b))),
+		Literal::Integer(b) => return Some(Literal::Real(f(a,b as f64)))
+	    }
         }
+        None
     }
-}
 
-impl Eq for Expression {}
-
-impl PartialOrd for Expression {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        match self {
-            Expression::Operand(lhs) => match other {
-                Expression::Operand(rhs) => lhs.partial_cmp(rhs),
-                _ => Some(1.cmp(&2)),
-            },
-            Expression::Operator(l_fun, l_exprs) => match other {
-                Expression::Operator(r_fun, r_exprs) => Some(
-                    l_fun
-                        .partial_cmp(r_fun)
-                        .unwrap()
-                        .then(l_exprs.iter().partial_cmp(r_exprs.iter()).unwrap()),
-                ),
-                _ => Some(2.cmp(&1)),
-            },
-        }
-    }
-}
-
-impl Ord for Expression {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other).unwrap()
-    }
-}
-
-impl fmt::Display for Expression {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Expression::Operand(t) => format!("{}", t),
-                Expression::Operator(fun, exprs) => format!(
-                    "({} {})",
-                    fun,
-                    exprs.iter().map(|x| format!("{} ", x)).collect::<String>()
-                ),
+    fn on_integers<F: Fn(i128, i128) -> i128>(f: F, a: Literal, b: Literal) -> Option<Literal> {
+        if let Literal::Integer(a) = a {
+            if let Literal::Integer(b) = b {
+                return Some(Literal::Integer(f(a, b)));
             }
-        )
+        }
+        None
+    }
+
+    fn as_integer(self) -> Literal {
+	if let Literal::Real(a) = self {
+	    return Literal::Integer(a as i128)
+	}
+	self
+    }
+
+    fn as_real(self) -> Literal {
+	if let Literal::Integer(a) = self {
+	    return Literal::Real(a as f64)
+	}
+	self
+    }
+
+}
+#[derive(Debug,Clone,Copy,PartialOrd,PartialEq)]
+enum Term {
+    Numeric(Literal),
+    Variable(char)
+}
+
+impl Term {
+    fn real_term(a: f64) -> Term {
+	Term::Numeric(Literal::new_real_literal(a))
+    }
+
+    fn integer_term(a: i128) -> Term {
+	Term::Numeric(Literal::new_integer_literal(a))
+    }
+
+    fn variable_term(a: char) -> Term {
+	Term::Variable(a)
+    }
+
+    fn get_real(self) -> Option<f64> {
+	if let Term::Numeric(Literal::Real(a)) = self {
+	    return Some(a);
+	}
+	None
+    }
+
+    fn get_integer(self) -> Option<i128> {
+	if let Term::Numeric(Literal::Integer(a)) = self {
+	    return Some(a)
+	}
+	None
+    }
+
+    fn get_variable(self) -> Option<char> {
+	if let Term::Variable(a) = self {
+	    return Some(a)
+	}
+	None
     }
 }
