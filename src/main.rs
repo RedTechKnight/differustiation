@@ -6,17 +6,23 @@ fn main() {
     println!(
         "{:?}",
         Expression::binary_expression(
-            Operator::Mul,
+            Operator::Div,
             Expression::binary_expression(
-                Operator::Mul,
-                Expression::integer_expression(20),
+                Operator::Div,
+                Expression::binary_expression(
+                    Operator::Div,
+                    Expression::real_expression(1.0),
+                    Expression::real_expression(2.0)
+                ),
                 Expression::real_expression(20.0)
             ),
             Expression::integer_expression(230)
         )
-            .factor_out_sub()
-	    .flatten_add()
-	    .flatten_mul()
+        .factor_out_sub()
+        .flatten_add()
+        .flatten_mul()
+        .simplify_rational_1()
+        .flatten_mul()
     );
 }
 
@@ -291,4 +297,35 @@ impl Expression {
             }
         }
     }
+
+    fn simplify_rational_1(self) -> Expression {
+        match self {
+            Expression::Binary(Operator::Div, num, denom) => {
+                match (num.simplify_rational_1(), denom.simplify_rational_1()) {
+                    (Expression::Binary(Operator::Div, a_num, a_denom), denom) => {
+                        Expression::binary_expression(
+                            Operator::Div,
+                            *a_num,
+                            Expression::binary_expression(Operator::Mul, *a_denom, denom),
+                        )
+                    }
+                    (a, b) => Expression::binary_expression(Operator::Div, a, b),
+                }
+            }
+            l @ Expression::Lit(_) => l,
+            Expression::Unary(f, a) => Expression::unary_expression(f, a.simplify_rational_1()),
+            Expression::Binary(f, a, b) => {
+                Expression::binary_expression(f, a.simplify_rational_1(), b.simplify_rational_1())
+            }
+            Expression::Variadic(f, exprs) => Expression::variadic_expression(
+                f,
+                exprs
+                    .into_iter()
+                    .map(Expression::simplify_rational_1)
+                    .collect(),
+            ),
+        }
+    }
+
+    
 }
