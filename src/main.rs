@@ -1,7 +1,3 @@
-use std::collections::HashMap;
-use std::fmt;
-use std::hash::{Hash, Hasher};
-
 fn main() {
     println!(
         "{:?}",
@@ -376,6 +372,27 @@ impl Expression {
             Expression::Unary(f, a) => Expression::unary_expression(f, a.simplify_rational_3()),
             Expression::Binary(f, a, b) => {
                 Expression::binary_expression(f, a.simplify_rational_3(), b.simplify_rational_3())
+            }
+            Expression::Variadic(Operator::Mul, mut exprs) => {
+                let first_div_node = exprs.iter().enumerate().find(|(_, v)| {
+                    if let Expression::Binary(Operator::Div, _, _) = v {
+                        return true;
+                    }
+                    return false;
+                });
+                match first_div_node {
+                    Some(first_div_node) => {
+                        let node = first_div_node.0;
+                        let (_, num, denom) = exprs.remove(node).get_binary_expression().unwrap();
+                        exprs.push(num);
+                        Expression::binary_expression(
+                            Operator::Div,
+                            Expression::variadic_expression(Operator::Mul, exprs),
+                            denom,
+                        )
+                    }
+                    _ => Expression::variadic_expression(Operator::Mul, exprs),
+                }
             }
             Expression::Variadic(f, exprs) => Expression::variadic_expression(
                 f,
