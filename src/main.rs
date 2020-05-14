@@ -3,6 +3,8 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 
 fn main() {
+    let st = String::from("Hello!");
+    println!("{}",&st[0..2]);
     let var = |n: char| Expression::Operand(Value::Variable(n));
     let mut expr = Expression::Operator(
         Function::Add,
@@ -51,6 +53,7 @@ fn main() {
     div_expr_c.simplify_rational_1();
     div_expr_c.explicit_exponents();
     div_expr_c.collect_exponents();
+    div_expr_c.fold_constants();
     div_expr_b.simplify_rational_2();
     div_expr.simplify_rational_1();
     expr.factor_subs();
@@ -61,6 +64,8 @@ fn main() {
     println!("{}", div_expr_b);
     println!("{}", div_expr_c);
 }
+
+
 impl Expression {
     fn factor_negs(&mut self) {
         match self {
@@ -326,26 +331,190 @@ impl Expression {
                                 panic!()
                             } else {
                                 exprs.remove(0);
-				exprs.iter_mut().for_each(Expression::collect_exponents);
-				*x = exprs.remove(0);
+                                exprs.iter_mut().for_each(Expression::collect_exponents);
+                                *x = exprs.remove(0);
                             }
                         }
                         _ => (),
                     });
-		    let mut expon = Vec::new();
-		    expon.append(expr_vec);
-		    if let Some(b) = base {
-			return Expression::Operator(Function::Exp, vec![b,Expression::Operator(Function::Add,expon)]);
-		    } else {
-			panic!()
-		    }
+                    let mut expon = Vec::new();
+                    expon.append(expr_vec);
+                    if let Some(b) = base {
+                        return Expression::Operator(
+                            Function::Exp,
+                            vec![b, Expression::Operator(Function::Add, expon)],
+                        );
+                    } else {
+                        panic!()
+                    }
                 };
 
-		*exprs = groups.into_iter().map(|mut x| combine_exponents(&mut x)).collect();
+                *exprs = groups
+                    .into_iter()
+                    .map(|mut x| combine_exponents(&mut x))
+                    .collect();
+
                 ()
             }
             Expression::Operator(_, exprs) => {
                 exprs.iter_mut().for_each(Expression::collect_exponents)
+            }
+            _ => (),
+        }
+    }
+
+    fn fold_constants(&mut self) {
+        match self {
+            Expression::Operator(Function::Add, exprs) => {
+                exprs.iter_mut().for_each(Expression::fold_constants);
+                let is_const = |expr: &Expression| match expr {
+                    Expression::Operand(Value::Integer(_))
+                    | Expression::Operand(Value::Real(_)) => true,
+                    _ => false,
+                };
+                let consts = exprs
+                    .iter()
+                    .filter(|x| is_const(x))
+                    .cloned()
+                    .map(|x| match x {
+                        Expression::Operand(op) => op,
+                        _ => panic!(),
+                    })
+                    .collect::<Vec<_>>();
+                let fold_consts = |const_vec: Vec<Value>| {
+                    const_vec
+                        .into_iter()
+                        .fold(Value::Integer(0), |acc, x| match acc {
+                            Value::Real(f) => match x {
+                                Value::Real(g) => Value::Real(f + g),
+                                Value::Integer(g) => Value::Real(f + (g as f64)),
+                                _ => panic!("Impossible!"),
+                            },
+                            Value::Integer(f) => match x {
+                                Value::Real(g) => Value::Real((f as f64) + g),
+                                Value::Integer(g) => Value::Integer(f + g),
+                                _ => panic!("Impossible!"),
+                            },
+                            _ => panic!("Impossible!"),
+                        })
+                };
+                *exprs = exprs.iter().filter(|x| !is_const(x)).cloned().collect();
+                exprs.push(Expression::Operand(fold_consts(consts)));
+            }
+            Expression::Operator(Function::Mul, exprs) => {
+                exprs.iter_mut().for_each(Expression::fold_constants);
+                let is_const = |expr: &Expression| match expr {
+                    Expression::Operand(Value::Integer(_))
+                    | Expression::Operand(Value::Real(_)) => true,
+                    _ => false,
+                };
+                let consts = exprs
+                    .iter()
+                    .filter(|x| is_const(x))
+                    .cloned()
+                    .map(|x| match x {
+                        Expression::Operand(op) => op,
+                        _ => panic!(),
+                    })
+                    .collect::<Vec<_>>();
+                let fold_consts = |const_vec: Vec<Value>| {
+                    const_vec
+                        .into_iter()
+                        .fold(Value::Integer(1), |acc, x| match acc {
+                            Value::Real(f) => match x {
+                                Value::Real(g) => Value::Real(f * g),
+                                Value::Integer(g) => Value::Real(f * (g as f64)),
+                                _ => panic!("Impossible!"),
+                            },
+                            Value::Integer(f) => match x {
+                                Value::Real(g) => Value::Real((f as f64) * g),
+                                Value::Integer(g) => Value::Integer(f * g),
+                                _ => panic!("Impossible!"),
+                            },
+                            _ => panic!("Impossible!"),
+                        })
+                };
+                *exprs = exprs.iter().filter(|x| !is_const(x)).cloned().collect();
+                exprs.push(Expression::Operand(fold_consts(consts)));
+            }
+            Expression::Operator(_, exprs) => exprs.iter_mut().for_each(Expression::fold_constants),
+            _ => (),
+        }
+    }
+    fn simplify_constants(&mut self) {
+        match self {
+            Expression::Operator(Function::Mul, exprs) => {
+                if exprs.contains(&Expression::Operand(Value::Integer(0))) {
+                    *self = Expression::Operand(Value::Integer(0));
+                    return ();
+                }
+                if exprs.len() == 1 {
+                    *self = exprs[0].clone();
+                    return ();
+                }
+                *exprs = exprs
+                    .iter()
+                    .cloned()
+                    .filter_map(|x| match x {
+                        Expression::Operand(Value::Integer(1)) => None,
+                        Expression::Operand(Value::Real(f)) if f == 1.0 => None,
+                        _ => Some(x),
+                    })
+                    .collect();
+            }
+            Expression::Operator(Function::Add, exprs) => {
+                if exprs.len() == 1 {
+                    *self = exprs[0].clone();
+                    return ();
+                }
+
+                *exprs = exprs
+                    .iter()
+                    .cloned()
+                    .filter_map(|x| match x {
+                        Expression::Operand(Value::Integer(0)) => None,
+                        Expression::Operand(Value::Real(f)) if f == 0.0 => None,
+                        _ => Some(x),
+                    })
+                    .collect();
+            }
+            Expression::Operator(Function::Exp, exprs) => {
+                if exprs.len() != 2 {
+                    panic!()
+                } else {
+                    match (&exprs[0], &exprs[1]) {
+                        (
+                            Expression::Operand(Value::Integer(0)),
+                            Expression::Operand(Value::Integer(0)),
+                        ) => (),
+
+                        (
+                            Expression::Operand(Value::Integer(0)),
+                            Expression::Operand(Value::Real(f)),
+                        ) if *f == 0.0 => (),
+                        (
+                            Expression::Operand(Value::Real(f)),
+                            Expression::Operand(Value::Integer(0)),
+                        ) if *f == 0.0 => (),
+                        (Expression::Operand(Value::Integer(0)), _) => {
+                            *self = Expression::Operand(Value::Integer(0))
+                        }
+                        (Expression::Operand(Value::Real(f)), _) if *f == 0.0 => {
+                            *self = Expression::Operand(Value::Real(0.0))
+                        }
+                        _ => (),
+                        (_, Expression::Operand(Value::Real(f))) if *f == 0.0 => {
+                            *self = Expression::Operand(Value::Real(1.0))
+                        }
+                        (_, Expression::Operand(Value::Integer(0))) => {
+                            *self = Expression::Operand(Value::Integer(1))
+                        },
+			_ => ()
+                    }
+                }
+            }
+            Expression::Operator(_, exprs) => {
+                exprs.iter_mut().for_each(Expression::simplify_constants)
             }
             _ => (),
         }

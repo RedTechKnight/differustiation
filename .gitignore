@@ -1,2 +1,5 @@
-/target
+target/
 *~
+plan.org
+Cargo.lock
+.vscode/
