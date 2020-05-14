@@ -7,21 +7,22 @@ fn main() {
         "{:?}",
         Expression::binary_expression(
             Operator::Div,
+            Expression::real_expression(1.232),
             Expression::binary_expression(
                 Operator::Div,
+                Expression::real_expression(2.2323),
                 Expression::binary_expression(
                     Operator::Div,
-                    Expression::real_expression(1.0),
-                    Expression::real_expression(2.0)
-                ),
-                Expression::real_expression(20.0)
-            ),
-            Expression::integer_expression(230)
+                    Expression::real_expression(23.33),
+                    Expression::integer_expression(123)
+                )
+            )
         )
         .factor_out_sub()
         .flatten_add()
         .flatten_mul()
         .simplify_rational_1()
+        .simplify_rational_2()
         .flatten_mul()
     );
 }
@@ -327,5 +328,32 @@ impl Expression {
         }
     }
 
-    
+    fn simplify_rational_2(self) -> Expression {
+        match self {
+            Expression::Binary(Operator::Div, num, denom) => {
+                match (num.simplify_rational_2(), denom.simplify_rational_2()) {
+                    (num, Expression::Binary(Operator::Div, b_num, b_denom)) => {
+                        Expression::binary_expression(
+                            Operator::Div,
+                            Expression::binary_expression(Operator::Mul, num, *b_denom),
+                            *b_num,
+                        )
+                    }
+                    (a, b) => Expression::binary_expression(Operator::Div, a, b),
+                }
+            }
+            l @ Expression::Lit(_) => l,
+            Expression::Unary(f, a) => Expression::unary_expression(f, a.simplify_rational_2()),
+            Expression::Binary(f, a, b) => {
+                Expression::binary_expression(f, a.simplify_rational_2(), b.simplify_rational_2())
+            }
+            Expression::Variadic(f, exprs) => Expression::variadic_expression(
+                f,
+                exprs
+                    .into_iter()
+                    .map(Expression::simplify_rational_2)
+                    .collect(),
+            ),
+        }
+    }
 }
