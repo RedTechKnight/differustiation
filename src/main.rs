@@ -101,6 +101,20 @@ impl Literal {
         }
         self
     }
+
+    fn is_real(&self) -> bool {
+        if let Literal::Real(a) = self {
+            return true;
+        }
+        false
+    }
+
+    fn is_integer(&self) -> bool {
+        if let Literal::Integer(_) = self {
+            return true;
+        }
+        false
+    }
 }
 #[derive(Debug, Clone, Copy, PartialOrd, PartialEq)]
 enum Term {
@@ -149,6 +163,20 @@ impl Term {
             return Some(a);
         }
         None
+    }
+
+    fn is_numeric(&self) -> bool {
+        if let Term::Numeric(_) = self {
+            return true;
+        }
+        false
+    }
+
+    fn is_variable(&self) -> bool {
+        if let Term::Variable(_) = self {
+            return true;
+        }
+        false
     }
 }
 #[derive(Debug, Clone, PartialOrd, PartialEq)]
@@ -256,6 +284,34 @@ impl Expression {
             return Some((f, exprs));
         }
         None
+    }
+
+    fn is_literal(&self) -> bool {
+        if let Expression::Lit(_) = self {
+            return true;
+        }
+        false
+    }
+
+    fn is_unary(&self) -> bool {
+        if let Expression::Unary(_, _) = self {
+            return true;
+        }
+        false
+    }
+
+    fn is_binary(&self) -> bool {
+        if let Expression::Binary(_, _, _) = self {
+            return true;
+        }
+        false
+    }
+
+    fn is_variadic(&self) -> bool {
+        if let Expression::Variadic(_, _) = self {
+            return true;
+        }
+        false
     }
 
     fn recurse<F: Fn(Expression) -> Expression>(self, rec: F) -> Expression {
@@ -477,20 +533,20 @@ impl Expression {
     fn collect_like_muls(self) -> Expression {
         match self {
             Expression::Variadic(Operator::Mul, mut exprs) => {
-		let mut bases = Vec::new();
-		for expr in exprs {
-		    match expr {
-			Expression::Binary(Operator::Exp,base,_) => {
-			    if (!bases.contains(&base)) {
-				bases.push(base.clone())
-			    }
-			}
-			_ => ()
-		    }
-		}
-		
-		panic!()
-	    },
+                let mut bases = Vec::new();
+                for expr in exprs {
+                    match expr {
+                        Expression::Binary(Operator::Exp, base, _) => {
+                            if (!bases.contains(&base)) {
+                                bases.push(base.clone())
+                            }
+                        }
+                        _ => (),
+                    }
+                }
+
+                panic!()
+            }
             other => other.recurse(Expression::collect_like_muls),
         }
     }
