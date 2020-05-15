@@ -361,7 +361,7 @@ impl Expression {
                     (a, b) => Expression::binary_expression(Operator::Div, a, b),
                 }
             }
-	    other => other.recurse(Expression::simplify_rational_1)
+            other => other.recurse(Expression::simplify_rational_1),
         }
     }
 
@@ -379,7 +379,7 @@ impl Expression {
                     (a, b) => Expression::binary_expression(Operator::Div, a, b),
                 }
             }
-	    other => other.recurse(Expression::simplify_rational_2)
+            other => other.recurse(Expression::simplify_rational_2),
         }
     }
 
@@ -418,7 +418,7 @@ impl Expression {
                     _ => Expression::variadic_expression(Operator::Mul, exprs),
                 }
             }
-	    other => other.recurse(Expression::simplify_rational_3)
+            other => other.recurse(Expression::simplify_rational_3),
         }
     }
 
@@ -443,8 +443,8 @@ impl Expression {
                     }
                 }
                 Expression::variadic_expression(Operator::Mul, exprs)
-            },
-	    other => other.recurse(Expression::explicit_exponents)
+            }
+            other => other.recurse(Expression::explicit_exponents),
         }
     }
 
@@ -470,7 +470,28 @@ impl Expression {
                 }
                 Expression::variadic_expression(Operator::Add, exprs)
             }
-	    other => other.recurse(Expression::explicit_coefficients)
+            other => other.recurse(Expression::explicit_coefficients),
+        }
+    }
+
+    fn collect_like_muls(self) -> Expression {
+        match self {
+            Expression::Variadic(Operator::Mul, mut exprs) => {
+		let mut bases = Vec::new();
+		for expr in exprs {
+		    match expr {
+			Expression::Binary(Operator::Exp,base,_) => {
+			    if (!bases.contains(&base)) {
+				bases.push(base.clone())
+			    }
+			}
+			_ => ()
+		    }
+		}
+		
+		panic!()
+	    },
+            other => other.recurse(Expression::collect_like_muls),
         }
     }
 }
