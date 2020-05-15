@@ -7,11 +7,11 @@ fn main() {
             Operator::Mul,
             Expression::real_expression(1.232),
             Expression::binary_expression(
-                Operator::Div,
-                Expression::real_expression(2.2323),
+                Operator::Mul,
+                Expression::real_expression(1.232),
                 Expression::binary_expression(
-                    Operator::Div,
-                    Expression::real_expression(23.33),
+                    Operator::Mul,
+                    Expression::real_expression(1.232),
                     Expression::binary_expression(
                         Operator::Add,
                         Expression::real_expression(1.0),
@@ -30,6 +30,7 @@ fn main() {
         .explicit_exponents()
         .explicit_coefficients()
         .explicit_exponents()
+        .collect_like_muls()
     );
     let a = Expression::variable_expression('a');
     println!(
@@ -534,20 +535,50 @@ impl Expression {
         match self {
             Expression::Variadic(Operator::Mul, mut exprs) => {
                 let mut bases = Vec::new();
-                for expr in exprs {
+                for expr in &exprs {
                     match expr {
                         Expression::Binary(Operator::Exp, base, _) => {
-                            if (!bases.contains(&base)) {
-                                bases.push(base.clone())
+                            if !bases.contains(base) {
+                                bases.push((*base).clone())
                             }
                         }
                         _ => (),
                     }
                 }
+                let mut terms: Vec<(Expression, Vec<Expression>)> = bases
+                    .iter()
+                    .cloned()
+                    .map(|x| *x)
+                    .zip(std::iter::repeat(Vec::new()))
+                    .collect();
 
-                panic!()
+                for term in &mut terms {
+                    for expr in &mut exprs {
+                        match expr {
+                            Expression::Binary(Operator::Exp, base, exp) => {
+                                if **base == term.0 {
+                                    term.1.push(*exp.clone())
+                                }
+                            }
+                            _ => (),
+                        }
+                    }
+                }
+                exprs = terms
+                    .into_iter()
+                    .map(|(base, exp)| {
+                        Expression::binary_expression(
+                            Operator::Exp,
+                            base,
+                            Expression::variadic_expression(Operator::Add, exp),
+                        )
+                    })
+                    .collect();
+		Expression::variadic_expression(Operator::Mul,exprs)
             }
             other => other.recurse(Expression::collect_like_muls),
         }
     }
+
+    
 }
