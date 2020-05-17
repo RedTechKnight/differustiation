@@ -1,6 +1,18 @@
 use std::fmt;
 
 fn main() {
+    let _dummy = vec![
+        Operator::Paren,
+        Operator::Sub,
+        Operator::Exp,
+        Operator::Neg,
+        Operator::Custom(String::from("1")),
+    ];
+    println!(
+        "{}",
+        Expression::variadic_expression(Operator::Add, vec![Expression::integer_expression(1)])
+            .simplify_constants()
+    );
     println!(
         "{}",
         Expression::binary_expression(
@@ -13,13 +25,14 @@ fn main() {
                     Operator::Mul,
                     Expression::real_expression(1.232),
                     Expression::binary_expression(
-                        Operator::Add,
+                        Operator::Mul,
                         Expression::real_expression(1.0),
                         Expression::variable_expression('a')
                     )
                 )
             )
         )
+        .factor_out_neg()
         .factor_out_sub()
         .flatten_add()
         .flatten_mul()
@@ -31,6 +44,10 @@ fn main() {
         .explicit_coefficients()
         .explicit_exponents()
         .collect_like_muls()
+        .simplify_constants()
+        .simplify_constants()
+        .order()
+        .simplify_constants()
     );
     let a = Expression::variable_expression('a');
     println!(
@@ -39,6 +56,7 @@ fn main() {
             Operator::Add,
             vec![a.clone(), a.clone(), a.clone(), a.clone()]
         )
+        .simplify_constants()
     );
 }
 
@@ -70,25 +88,6 @@ impl Literal {
         Literal::Integer(a)
     }
 
-    fn on_reals<F: Fn(f64, f64) -> f64>(f: F, a: Literal, b: Literal) -> Option<Literal> {
-        if let Literal::Real(a) = a {
-            match b {
-                Literal::Real(b) => return Some(Literal::Real(f(a, b))),
-                Literal::Integer(b) => return Some(Literal::Real(f(a, b as f64))),
-            }
-        }
-        None
-    }
-
-    fn on_integers<F: Fn(i128, i128) -> i128>(f: F, a: Literal, b: Literal) -> Option<Literal> {
-        if let Literal::Integer(a) = a {
-            if let Literal::Integer(b) = b {
-                return Some(Literal::Integer(f(a, b)));
-            }
-        }
-        None
-    }
-
     fn as_integer(self) -> Literal {
         if let Literal::Real(a) = self {
             return Literal::Integer(a as i128);
@@ -96,25 +95,18 @@ impl Literal {
         self
     }
 
-    fn as_real(self) -> Literal {
+    fn get_integer(self) -> Option<i128> {
+        match self {
+            Literal::Integer(a) => Some(a),
+            _ => None,
+        }
+    }
+
+    fn _as_real(self) -> Literal {
         if let Literal::Integer(a) = self {
             return Literal::Real(a as f64);
         }
         self
-    }
-
-    fn is_real(&self) -> bool {
-        if let Literal::Real(a) = self {
-            return true;
-        }
-        false
-    }
-
-    fn is_integer(&self) -> bool {
-        if let Literal::Integer(_) = self {
-            return true;
-        }
-        false
     }
 }
 #[derive(Debug, Clone, Copy, PartialOrd, PartialEq)]
@@ -144,43 +136,8 @@ impl Term {
     fn variable_term(a: char) -> Term {
         Term::Variable(a)
     }
-
-    fn get_real(self) -> Option<f64> {
-        if let Term::Numeric(Literal::Real(a)) = self {
-            return Some(a);
-        }
-        None
-    }
-
-    fn get_integer(self) -> Option<i128> {
-        if let Term::Numeric(Literal::Integer(a)) = self {
-            return Some(a);
-        }
-        None
-    }
-
-    fn get_variable(self) -> Option<char> {
-        if let Term::Variable(a) = self {
-            return Some(a);
-        }
-        None
-    }
-
-    fn is_numeric(&self) -> bool {
-        if let Term::Numeric(_) = self {
-            return true;
-        }
-        false
-    }
-
-    fn is_variable(&self) -> bool {
-        if let Term::Variable(_) = self {
-            return true;
-        }
-        false
-    }
 }
-#[derive(Debug, Clone, PartialOrd, PartialEq)]
+#[derive(Debug, Clone, PartialOrd, PartialEq, Eq, Ord)]
 enum Operator {
     Paren,
     Neg,
@@ -259,62 +216,12 @@ impl Expression {
         Expression::Variadic(f, exprs)
     }
 
-    fn get_literal(self) -> Option<Term> {
-        if let (Expression::Lit(a)) = self {
-            return Some(a);
-        }
-        None
-    }
-
-    fn get_unary_expression(self) -> Option<(Operator, Expression)> {
-        if let (Expression::Unary(f, a)) = self {
-            return Some((f, *a));
-        }
-        None
-    }
-
     fn get_binary_expression(self) -> Option<(Operator, Expression, Expression)> {
-        if let (Expression::Binary(f, a, b)) = self {
+        if let Expression::Binary(f, a, b) = self {
             return Some((f, *a, *b));
         }
         None
     }
-
-    fn get_variadic_expression(self) -> Option<(Operator, Vec<Expression>)> {
-        if let Expression::Variadic(f, exprs) = self {
-            return Some((f, exprs));
-        }
-        None
-    }
-
-    fn is_literal(&self) -> bool {
-        if let Expression::Lit(_) = self {
-            return true;
-        }
-        false
-    }
-
-    fn is_unary(&self) -> bool {
-        if let Expression::Unary(_, _) = self {
-            return true;
-        }
-        false
-    }
-
-    fn is_binary(&self) -> bool {
-        if let Expression::Binary(_, _, _) = self {
-            return true;
-        }
-        false
-    }
-
-    fn is_variadic(&self) -> bool {
-        if let Expression::Variadic(_, _) = self {
-            return true;
-        }
-        false
-    }
-
     fn recurse<F: Fn(Expression) -> Expression>(self, rec: F) -> Expression {
         match self {
             l @ Expression::Lit(_) => l,
@@ -574,11 +481,113 @@ impl Expression {
                         )
                     })
                     .collect();
-		Expression::variadic_expression(Operator::Mul,exprs)
+                Expression::variadic_expression(Operator::Mul, exprs)
             }
             other => other.recurse(Expression::collect_like_muls),
         }
     }
 
-    
+    fn simplify_constants(self) -> Expression {
+        match self {
+            Expression::Binary(Operator::Exp, base, exp)
+                if (*base == Expression::integer_expression(0)
+                    || *base == Expression::real_expression(0.0))
+                    && (*exp == Expression::real_expression(0.0)
+                        || *exp == Expression::integer_expression(0)) =>
+            {
+                Expression::Binary(Operator::Exp, base, exp)
+            }
+            Expression::Binary(Operator::Exp, base, _)
+                if *base == Expression::integer_expression(0)
+                    || *base == Expression::real_expression(0.0) =>
+            {
+                Expression::integer_expression(0)
+            }
+            Expression::Binary(Operator::Exp, base, _)
+                if *base == Expression::integer_expression(1)
+                    || *base == Expression::real_expression(1.0) =>
+            {
+                Expression::integer_expression(1)
+            }
+            Expression::Binary(Operator::Exp, _, exp)
+                if *exp == Expression::integer_expression(0)
+                    || *exp == Expression::real_expression(0.0) =>
+            {
+                Expression::integer_expression(1)
+            }
+            Expression::Binary(Operator::Exp, base, exp)
+                if *exp == Expression::integer_expression(1)
+                    || *exp == Expression::real_expression(1.0) =>
+            {
+                *base
+            }
+            Expression::Variadic(Operator::Mul, exprs)
+                if exprs.contains(&Expression::integer_expression(0))
+                    || exprs.contains(&Expression::real_expression(0.0)) =>
+            {
+                Expression::integer_expression(0)
+            }
+	    Expression::Variadic(_, mut exprs) if exprs.len() == 1 => exprs.remove(0),
+            Expression::Variadic(Operator::Mul, exprs) => Expression::variadic_expression(
+                Operator::Mul,
+                exprs
+                    .into_iter()
+                    .map(Expression::simplify_constants)
+                    .filter(|x| {
+                        !(*x == Expression::integer_expression(1))
+                            && !(*x == Expression::real_expression(1.0))
+                    })
+                    .collect(),
+            ),
+            Expression::Variadic(Operator::Add, exprs) => Expression::variadic_expression(
+                Operator::Add,
+                exprs
+                    .into_iter()
+                    .map(Expression::simplify_constants)
+                    .filter(|x| {
+                        !(*x == Expression::integer_expression(0))
+                            && !(*x == Expression::real_expression(0.0))
+                    })
+                    .collect(),
+            ),
+            
+
+            other => other.recurse(Expression::simplify_constants),
+        }
+    }
+
+    fn comparer(&self, b: &Expression) -> std::cmp::Ordering {
+        match (self, b) {
+            (Expression::Lit(Term::Numeric(a)), Expression::Lit(Term::Numeric(b))) => a
+                .as_integer()
+                .get_integer()
+                .unwrap()
+                .cmp(&b.as_integer().get_integer().unwrap()),
+            (Expression::Lit(Term::Numeric(_)), _) => std::cmp::Ordering::Less,
+            (Expression::Lit(Term::Variable(a)), Expression::Lit(Term::Variable(b))) => a.cmp(b),
+            (Expression::Lit(Term::Variable(_)), _) => std::cmp::Ordering::Less,
+            (Expression::Unary(op_a, a), Expression::Unary(op_b, b)) => {
+                op_a.cmp(op_b).then(Expression::comparer(a, b))
+            }
+            (Expression::Unary(_, _), _) => std::cmp::Ordering::Less,
+            (Expression::Binary(op_a, a_1, a_2), Expression::Binary(op_b, b_1, b_2)) => op_a
+                .cmp(op_b)
+                .then(Expression::comparer(a_1, b_1))
+                .then(Expression::comparer(a_2, b_2)),
+            (Expression::Binary(_, _, _), _) => std::cmp::Ordering::Less,
+            (Expression::Variadic(a, _), Expression::Variadic(b, _)) => a.cmp(b),
+            _ => std::cmp::Ordering::Less,
+        }
+    }
+
+    fn order(self) -> Expression {
+        match self {
+            Expression::Variadic(op, mut exprs) => {
+                exprs = exprs.into_iter().map(|x| x.order()).collect();
+                exprs.sort_by(Expression::comparer);
+                Expression::variadic_expression(op, exprs)
+            }
+            other => other.recurse(Expression::order),
+        }
+    }
 }
