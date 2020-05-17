@@ -27,7 +27,7 @@ fn main() {
                     Expression::binary_expression(
                         Operator::Mul,
                         Expression::real_expression(1.0),
-                        Expression::variable_expression('a')
+                        Expression::variable_expression('x')
                     )
                 )
             )
@@ -47,6 +47,8 @@ fn main() {
         .simplify_constants()
         .simplify_constants()
         .order()
+        .simplify_constants()
+        .derive('x')
         .simplify_constants()
     );
     let a = Expression::variable_expression('a');
@@ -527,7 +529,7 @@ impl Expression {
             {
                 Expression::integer_expression(0)
             }
-	    Expression::Variadic(_, mut exprs) if exprs.len() == 1 => exprs.remove(0),
+            Expression::Variadic(_, mut exprs) if exprs.len() == 1 => exprs.remove(0),
             Expression::Variadic(Operator::Mul, exprs) => Expression::variadic_expression(
                 Operator::Mul,
                 exprs
@@ -550,7 +552,6 @@ impl Expression {
                     })
                     .collect(),
             ),
-            
 
             other => other.recurse(Expression::simplify_constants),
         }
@@ -588,6 +589,71 @@ impl Expression {
                 Expression::variadic_expression(op, exprs)
             }
             other => other.recurse(Expression::order),
+        }
+    }
+
+    fn derive(self, wrt: char) -> Expression {
+        match self {
+            Expression::Lit(_) => Expression::integer_expression(0),
+            Expression::Unary(Operator::Paren, a) => *a,
+            Expression::Unary(Operator::Neg, a) => {
+                Expression::unary_expression(Operator::Neg, a.derive(wrt))
+            }
+            Expression::Binary(Operator::Div, a, b) => {
+                let a_deriv = a.clone().derive(wrt);
+                let b_deriv = b.clone().derive(wrt);
+                let b_squared = Expression::binary_expression(
+                    Operator::Exp,
+                    *b.clone(),
+                    Expression::integer_expression(2),
+                );
+                Expression::binary_expression(
+                    Operator::Div,
+                    Expression::binary_expression(
+                        Operator::Add,
+                        Expression::binary_expression(Operator::Mul, *b, a_deriv),
+                        Expression::binary_expression(
+                            Operator::Mul,
+                            Expression::integer_expression(-1),
+                            Expression::binary_expression(Operator::Mul, *a, b_deriv),
+                        ),
+                    ),
+                    b_squared,
+                )
+            }
+            Expression::Binary(Operator::Exp, base, exp) => Expression::binary_expression(
+                Operator::Mul,
+                Expression::binary_expression(Operator::Exp, *base.clone(), *exp.clone()),
+                Expression::binary_expression(
+                    Operator::Mul,
+                    *exp,
+                    Expression::unary_expression(Operator::Custom(String::from("ln")), *base)
+                        .derive(wrt),
+                ),
+            ),
+            Expression::Variadic(Operator::Add, exprs) => Expression::variadic_expression(
+                Operator::Add,
+                exprs.into_iter().map(|x| x.derive(wrt)).collect(),
+            ),
+            Expression::Variadic(Operator::Mul, mut exprs) if exprs.len() == 1 => {
+                exprs.remove(0).derive(wrt)
+            }
+            Expression::Variadic(Operator::Mul, mut exprs) => {
+                let f = exprs.remove(0);
+                let exprs_deriv = exprs.clone();
+                exprs.insert(0, f.clone().derive(wrt));
+                Expression::binary_expression(
+                    Operator::Add,
+                    Expression::variadic_expression(Operator::Mul, exprs),
+                    Expression::binary_expression(
+                        Operator::Mul,
+                        f,
+                        Expression::Variadic(Operator::Mul, exprs_deriv).derive(wrt),
+                    ),
+                )
+            }
+
+            other => other,
         }
     }
 }
