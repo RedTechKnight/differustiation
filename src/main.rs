@@ -20,7 +20,7 @@ fn main() {
             Expression::real_expression(1.232),
             Expression::binary_expression(
                 Operator::Mul,
-                Expression::real_expression(1.232),
+                Expression::real_expression(1.231),
                 Expression::binary_expression(
                     Operator::Mul,
                     Expression::real_expression(1.232),
@@ -32,24 +32,7 @@ fn main() {
                 )
             )
         )
-        .factor_out_neg()
-        .factor_out_sub()
-        .flatten_add()
-        .flatten_mul()
-        .simplify_rational_1()
-        .simplify_rational_2()
-        .simplify_rational_3()
-        .flatten_mul()
-        .explicit_exponents()
-        .explicit_coefficients()
-        .explicit_exponents()
-        .collect_like_muls()
-        .simplify_constants()
-        .simplify_constants()
-        .order()
-        .simplify_constants()
-        .derive('x')
-        .simplify_constants()
+        .simplify().order().order()
     );
     let a = Expression::variable_expression('a');
     println!(
@@ -590,6 +573,43 @@ impl Expression {
             }
             other => other.recurse(Expression::order),
         }
+    }
+
+    fn equal(&self, other: &Expression) -> bool {
+        match (self, other) {
+            (Expression::Lit(a), Expression::Lit(b)) => a == b,
+            (Expression::Unary(op_a, a_1), Expression::Unary(op_b, b_1)) => {
+                op_a == op_b && a_1.equal(b_1)
+            }
+            (Expression::Binary(op_a, a_1, a_2), Expression::Binary(op_b, b_1, b_2)) => {
+                op_a == op_b && a_1.equal(b_1) && a_2.equal(b_2)
+            }
+            (Expression::Variadic(op_a, exprs_a), Expression::Variadic(op_b, exprs_b)) => {
+                op_a == op_b
+                    && exprs_a.len() == exprs_b.len()
+                    && exprs_a.iter().zip(exprs_b.iter()).all(|(a, b)| a.equal(b))
+            }
+            _ => false,
+        }
+    }
+
+    fn simplify(self) -> Expression {
+        let last_self = self.clone();
+        let simplified = self
+            .factor_out_neg()
+            .factor_out_sub()
+            .flatten_add()
+            .flatten_mul()
+            .simplify_rational_1()
+            .simplify_rational_2()
+            .simplify_rational_3()
+            .explicit_exponents()
+            .collect_like_muls()
+            .simplify_constants();
+        if simplified.equal(&last_self) {
+            return simplified;
+        }
+        simplified.simplify()
     }
 
     fn derive(self, wrt: char) -> Expression {
