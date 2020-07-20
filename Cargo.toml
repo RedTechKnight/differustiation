@@ -1,5 +1,5 @@
 [package]
-name = "algebra"
+name = "differustiation"
 version = "0.1.0"
 authors = ["RedTechKnight <bloodtechknight@protonmail.com>"]
 edition = "2018"
