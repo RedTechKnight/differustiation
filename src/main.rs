@@ -2,6 +2,7 @@ use std::fmt;
 use std::fs::File;
 use std::io;
 use std::io::prelude::*;
+
 fn main() {
     let _dummy = vec![
         Operator::Paren,
@@ -11,47 +12,12 @@ fn main() {
         Operator::Custom(String::from("1")),
     ];
 
-    println!(
-        "{}",
-        Expression::variadic_expression(Operator::Add, vec![Expression::integer_expression(1)])
-            .simplify_constants()
-    );
-    let expr = Expression::binary_expression(
-        Operator::Mul,
-        Expression::real_expression(1.232),
-        Expression::binary_expression(
-            Operator::Mul,
-            Expression::real_expression(1.231),
-            Expression::binary_expression(
-                Operator::Mul,
-                Expression::real_expression(1.232),
-                Expression::binary_expression(
-                    Operator::Mul,
-                    Expression::real_expression(1.0),
-                    Expression::variable_expression('x'),
-                ),
-            ),
-        ),
-    )
-    .simplify()
-	.order()
-	.order()
-	.order()
-	.order();
-    println!("{}", expr);
-    texify(expr);
-    let a = Expression::variable_expression('a');
-    println!(
-        "{}",
-        Expression::Variadic(
-            Operator::Add,
-            vec![a.clone(), a.clone(), a.clone(), a.clone()]
-        )
-        .simplify_constants()
-    );
+    let input = "a + b + c + d + e".chars();
+    let mut tokens = tokenise(&mut input.peekable()).into_iter().peekable();
+    println!("{:?}",parse_expr(&mut tokens));
 }
 fn texify(expr: Expression) -> io::Result<()> {
-    let mut output = File::create("debug.tex")?;
+    let mut output = File::create("debug/debug.tex")?;
     output.write_all(b"\\documentclass{article}\n")?;
     output.write_all(b"\\begin{document}\n \\(")?;
     output.write_all(expr.as_tex().as_bytes())?;
@@ -122,6 +88,15 @@ impl fmt::Display for Term {
 }
 
 impl Term {
+    fn from_string(mut input: String) -> Term {
+        match input {
+            mut input if input.chars().all(char::is_alphabetic) => Term::Variable(input.remove(0)),
+            input if input.chars().all(char::is_numeric) => {
+                Term::Numeric(Literal::Integer(input.parse().unwrap()))
+            }
+            _ => Term::real_term(0.0),
+        }
+    }
     fn real_term(a: f64) -> Term {
         Term::Numeric(Literal::new_real_literal(a))
     }
@@ -197,6 +172,9 @@ impl fmt::Display for Expression {
 }
 
 impl Expression {
+    fn term_expression(t: Term) -> Expression {
+        Expression::Lit(t)
+    }
     fn variable_expression(a: char) -> Expression {
         Expression::Lit(Term::variable_term(a))
     }
@@ -738,5 +716,115 @@ impl Expression {
                 output.into_iter().collect()
             }
         }
+    }
+}
+use std::iter::Peekable;
+fn tokenise<I: Iterator<Item = char>>(input: &mut Peekable<I>) -> Vec<String> {
+    let mut output = Vec::new();
+    while let Some(chr) = input.next() {
+        match chr {
+            chr if ['+', '-', '/', '*', '^', '(', ')'].contains(&chr) => {
+                output.push(chr.to_string())
+            }
+            chr if chr.is_numeric() => {
+                let mut num = String::new();
+                num.push(chr);
+                while let Some(chr) = input.peek() {
+                    if chr.is_numeric() {
+                        num.push(input.next().unwrap())
+                    } else {
+                        break;
+                    }
+                }
+                output.push(num)
+            }
+            chr if chr.is_alphabetic() => output.push(chr.to_string()),
+            chr if [' '].contains(&chr) => (),
+            _ => (),
+        }
+    }
+    output
+}
+
+fn left_assoc<I: Iterator<Item = String>>(
+    last_expr: Expression,
+    input: &mut Peekable<I>,
+) -> Expression {
+    match input.peek() {
+        Some(tok) if ["+", "-", "*", "/", "^"].contains(&tok.as_str()) => {
+            let operator = match input.next().unwrap() {
+                op if op == "+" => Operator::Add,
+                op if op == "/" => Operator::Div,
+                op if op == "^" => Operator::Exp,
+                op if op == "*" => Operator::Mul,
+                op if op == "-" => Operator::Sub,
+                op => panic!("No valid operator can fit here. Token: {}", op),
+            };
+
+            let rhs = input.next();
+            match rhs {
+                Some(token) => {
+                    let expr = Expression::Binary(
+                        operator,
+                        Box::new(last_expr),
+                        Box::new(Expression::term_expression(Term::from_string(token))),
+                    );
+                    left_assoc(expr, input)
+                }
+                None => panic!("No right hand operand for binary {}", operator),
+            }
+        }
+        _ => last_expr,
+    }
+}
+
+fn parse_expr<I: Iterator<Item = String>>(input: &mut Peekable<I>) -> Expression {
+    if input.peek().is_some() {
+        match input.next().unwrap() {
+            token if token == "-" => Expression::Unary(Operator::Neg, Box::new(parse_expr(input))),
+            token if token == "(" => {
+                let inner = parse_expr(input);
+                match input.peek() {
+                    Some(tok) if tok == ")" => {
+                        input.next();
+                        Expression::Unary(Operator::Paren, Box::new(inner))
+                    }
+                    _ => panic!("Ill formed expression involving parentheses!"),
+                }
+            }
+            token
+                if token.chars().all(char::is_numeric)
+                    || token.chars().all(char::is_alphabetic) =>
+            {
+                let lhs = token;
+                if input.peek().is_some() {
+                    let operator = match input.next().unwrap() {
+                        op if op == "+" => Operator::Add,
+                        op if op == "/" => Operator::Div,
+                        op if op == "^" => Operator::Exp,
+                        op if op == "*" => Operator::Mul,
+                        op if op == "-" => Operator::Sub,
+                        op => panic!("No valid operator can fit here. Token: {}", op),
+                    };
+                    let rhs = input.next();
+                    match rhs {
+                        Some(token) => {
+                            let expr = Expression::Binary(
+                                operator,
+                                Box::new(Expression::term_expression(Term::from_string(lhs))),
+                                Box::new(Expression::term_expression(Term::from_string(token))),
+                            );
+                            left_assoc(expr, input)
+                        }
+                        None => panic!("No right hand operand for binary {}", operator),
+                    }
+                } else {
+                    panic!("EOF reached. Expected more tokens!")
+                }
+            }
+            _ => Expression::integer_expression(0),
+        }
+    } else {
+        panic!("End of input reached before expression fully built!")
     }
 }
