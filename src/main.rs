@@ -1,5 +1,7 @@
 use std::fmt;
-
+use std::fs::File;
+use std::io;
+use std::io::prelude::*;
 fn main() {
     let _dummy = vec![
         Operator::Paren,
@@ -8,32 +10,36 @@ fn main() {
         Operator::Neg,
         Operator::Custom(String::from("1")),
     ];
+
     println!(
         "{}",
         Expression::variadic_expression(Operator::Add, vec![Expression::integer_expression(1)])
             .simplify_constants()
     );
-    println!(
-        "{}",
+    let expr = Expression::binary_expression(
+        Operator::Mul,
+        Expression::real_expression(1.232),
         Expression::binary_expression(
             Operator::Mul,
-            Expression::real_expression(1.232),
+            Expression::real_expression(1.231),
             Expression::binary_expression(
                 Operator::Mul,
-                Expression::real_expression(1.231),
+                Expression::real_expression(1.232),
                 Expression::binary_expression(
                     Operator::Mul,
-                    Expression::real_expression(1.232),
-                    Expression::binary_expression(
-                        Operator::Mul,
-                        Expression::real_expression(1.0),
-                        Expression::variable_expression('x')
-                    )
-                )
-            )
-        )
-        .simplify().order().order()
-    );
+                    Expression::real_expression(1.0),
+                    Expression::variable_expression('x'),
+                ),
+            ),
+        ),
+    )
+    .simplify()
+	.order()
+	.order()
+	.order()
+	.order();
+    println!("{}", expr);
+    texify(expr);
     let a = Expression::variable_expression('a');
     println!(
         "{}",
@@ -44,7 +50,13 @@ fn main() {
         .simplify_constants()
     );
 }
-
+fn texify(expr: Expression) -> io::Result<()> {
+    let mut output = File::create("debug.tex")?;
+    output.write_all(b"\\documentclass{article}\n")?;
+    output.write_all(b"\\begin{document}\n \\(")?;
+    output.write_all(expr.as_tex().as_bytes())?;
+    output.write_all(b"\\) \\end{document}")
+}
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 enum Literal {
     Integer(i128),
@@ -120,6 +132,14 @@ impl Term {
 
     fn variable_term(a: char) -> Term {
         Term::Variable(a)
+    }
+
+    fn as_tex(self) -> String {
+        match self {
+            Term::Numeric(Literal::Integer(i)) => i.to_string(),
+            Term::Numeric(Literal::Real(r)) => r.to_string(),
+            Term::Variable(c) => c.to_string(),
+        }
     }
 }
 #[derive(Debug, Clone, PartialOrd, PartialEq, Eq, Ord)]
@@ -674,6 +694,49 @@ impl Expression {
             }
 
             other => other,
+        }
+    }
+
+    fn as_tex(self) -> String {
+        match self {
+            Expression::Lit(literal) => literal.as_tex(),
+            Expression::Unary(operator, operand) => match operator {
+                Operator::Paren => format!("({})", operand.as_tex()),
+                Operator::Neg => format!("-{}", operand.as_tex()),
+                Operator::Custom(fun_name) => format!("{}({})", fun_name, operand.as_tex()),
+                _ => panic!("Impossible state reached"),
+            },
+            Expression::Binary(operator, left, right) => match operator {
+                Operator::Add => format!("{} + {}", left.as_tex(), right.as_tex()),
+                Operator::Sub => format!("{} - {}", left.as_tex(), right.as_tex()),
+                Operator::Div => format!("{} \\div {}", left.as_tex(), right.as_tex()),
+                Operator::Mul => format!("{} \\times {}", left.as_tex(), right.as_tex()),
+                Operator::Exp => format!("{}^{{{}}}", left.as_tex(), right.as_tex()),
+                _ => panic!("Impossible state reached"),
+            },
+            Expression::Variadic(operation, args) => {
+                let mut list = args
+                    .into_iter()
+                    .map(|x| x.as_tex())
+                    .collect::<Vec<String>>();
+                let mut output = Vec::new();
+                if list.len() > 0 {
+                    output.push(list.remove(0));
+                }
+
+                while list.len() > 0 {
+                    output.push(
+                        match operation {
+                            Operator::Add => " + ",
+                            Operator::Mul => " \\times ",
+                            _ => "invalid",
+                        }
+                        .to_string(),
+                    );
+                    output.push(list.remove(0));
+                }
+                output.into_iter().collect()
+            }
         }
     }
 }
