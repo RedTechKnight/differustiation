@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io;
 use std::io::prelude::*;
 
-fn main() {
+fn main(){
     let _dummy = vec![
         Operator::Paren,
         Operator::Sub,
@@ -12,9 +12,10 @@ fn main() {
         Operator::Custom(String::from("1")),
     ];
 
-    let input = "a + b + c + d + e".chars();
+    let input = "a - b * c - d / 86 ^ (-221) ^ (1123123 + 2 * 3)".chars();
     let mut tokens = tokenise(&mut input.peekable()).into_iter().peekable();
-    println!("{:?}",parse_expr(&mut tokens));
+    let expr = parse_add(&mut tokens).unwrap();
+    texify(expr);
 }
 fn texify(expr: Expression) -> io::Result<()> {
     let mut output = File::create("debug/debug.tex")?;
@@ -746,85 +747,111 @@ fn tokenise<I: Iterator<Item = char>>(input: &mut Peekable<I>) -> Vec<String> {
     output
 }
 
-fn left_assoc<I: Iterator<Item = String>>(
-    last_expr: Expression,
-    input: &mut Peekable<I>,
-) -> Expression {
-    match input.peek() {
-        Some(tok) if ["+", "-", "*", "/", "^"].contains(&tok.as_str()) => {
-            let operator = match input.next().unwrap() {
-                op if op == "+" => Operator::Add,
-                op if op == "/" => Operator::Div,
-                op if op == "^" => Operator::Exp,
-                op if op == "*" => Operator::Mul,
-                op if op == "-" => Operator::Sub,
-                op => panic!("No valid operator can fit here. Token: {}", op),
-            };
-
-            let rhs = input.next();
-            match rhs {
-                Some(token) => {
-                    let expr = Expression::Binary(
-                        operator,
-                        Box::new(last_expr),
-                        Box::new(Expression::term_expression(Term::from_string(token))),
-                    );
-                    left_assoc(expr, input)
-                }
-                None => panic!("No right hand operand for binary {}", operator),
+fn parse_primary<I: Iterator<Item = String>>(input: &mut Peekable<I>) -> Option<Expression> {
+    Some(match input.next() {
+        Some(token) if token == "(" => {
+            
+            let inner_expr = parse_add(input)?;
+            match input.next() {
+                Some(tok) if tok == ")" => Expression::Unary(Operator::Paren, Box::new(inner_expr)),
+                _ => panic!("No closing parenthesis to match opening."),
             }
         }
-        _ => last_expr,
+        Some(num) if num.chars().all(char::is_numeric) => {
+            Expression::integer_expression(num.parse::<i128>().unwrap())
+        }
+        Some(mut var) if var.chars().all(char::is_alphabetic) => {
+            Expression::variable_expression(var.remove(0))
+        }
+        Some(tok) => panic!("Primary expression expected. Found: {}", tok),
+        None => panic!("EOF reached."),
+    })
+}
+
+fn parse_unary<I: Iterator<Item = String>>(input: &mut Peekable<I>) -> Option<Expression> {
+    match input.peek() {
+        Some(tok) if tok == "-" => {
+            input.next();
+            let operand = parse_unary(input)?;
+            Some(Expression::Unary(Operator::Neg, Box::new(operand)))
+        }
+        Some(_) => parse_primary(input),
+        None => None,
     }
 }
 
-fn parse_expr<I: Iterator<Item = String>>(input: &mut Peekable<I>) -> Expression {
-    if input.peek().is_some() {
-        match input.next().unwrap() {
-            token if token == "-" => Expression::Unary(Operator::Neg, Box::new(parse_expr(input))),
-            token if token == "(" => {
-                let inner = parse_expr(input);
-                match input.peek() {
-                    Some(tok) if tok == ")" => {
-                        input.next();
-                        Expression::Unary(Operator::Paren, Box::new(inner))
-                    }
-                    _ => panic!("Ill formed expression involving parentheses!"),
-                }
-            }
-            token
-                if token.chars().all(char::is_numeric)
-                    || token.chars().all(char::is_alphabetic) =>
-            {
-                let lhs = token;
-                if input.peek().is_some() {
-                    let operator = match input.next().unwrap() {
-                        op if op == "+" => Operator::Add,
-                        op if op == "/" => Operator::Div,
-                        op if op == "^" => Operator::Exp,
-                        op if op == "*" => Operator::Mul,
-                        op if op == "-" => Operator::Sub,
-                        op => panic!("No valid operator can fit here. Token: {}", op),
-                    };
-                    let rhs = input.next();
-                    match rhs {
-                        Some(token) => {
-                            let expr = Expression::Binary(
-                                operator,
-                                Box::new(Expression::term_expression(Term::from_string(lhs))),
-                                Box::new(Expression::term_expression(Term::from_string(token))),
-                            );
-                            left_assoc(expr, input)
-                        }
-                        None => panic!("No right hand operand for binary {}", operator),
-                    }
-                } else {
-                    panic!("EOF reached. Expected more tokens!")
-                }
-            }
-            _ => Expression::integer_expression(0),
+fn parse_exp<I: Iterator<Item = String>>(input: &mut Peekable<I>) -> Option<Expression> {
+    let lhs = parse_unary(input)?;
+    match input.peek() {
+        Some(tok) if tok == "^" => {
+            input.next();
+            let rhs = parse_exp(input)?;
+            Some(Expression::Binary(
+                Operator::Exp,
+                Box::new(lhs),
+                Box::new(rhs),
+            ))
         }
-    } else {
-        panic!("End of input reached before expression fully built!")
+        _ => Some(lhs),
     }
+}
+
+fn left_assoc_mul<I: Iterator<Item = String>>(
+    lhs: Expression,
+    input: &mut Peekable<I>,
+) -> Option<Expression> {
+    match input.peek() {
+        Some(tok) if tok == "*" => {
+            input.next();
+            let rhs = parse_exp(input)?;
+
+            left_assoc_mul(
+                Expression::Binary(Operator::Mul, Box::new(lhs), Box::new(rhs)),
+                input,
+            )
+        }
+        Some(tok) if tok == "/" => {
+            input.next();
+            let rhs = parse_exp(input)?;
+            left_assoc_mul(
+                Expression::Binary(Operator::Div, Box::new(lhs), Box::new(rhs)),
+                input,
+            )
+        }
+        _ => Some(lhs),
+    }
+}
+
+fn parse_mul<I: Iterator<Item = String>>(input: &mut Peekable<I>) -> Option<Expression> {
+    let lhs = parse_exp(input)?;
+    left_assoc_mul(lhs, input)
+}
+
+fn left_assoc_add<I: Iterator<Item = String>>(
+    lhs: Expression,
+    input: &mut Peekable<I>,
+) -> Option<Expression> {
+    match input.peek() {
+        Some(tok) if tok == "+" => {
+            input.next();
+            let rhs = parse_mul(input)?;
+            left_assoc_add(
+                Expression::Binary(Operator::Add, Box::new(lhs), Box::new(rhs)),
+                input,
+            )
+        }
+        Some(tok) if tok == "-" => {
+            input.next();
+            let rhs = parse_mul(input)?;
+            left_assoc_add(
+                Expression::Binary(Operator::Sub, Box::new(lhs), Box::new(rhs)),
+                input,
+            )
+        }
+        _ => Some(lhs),
+    }
+}
+fn parse_add<I: Iterator<Item = String>>(input: &mut Peekable<I>) -> Option<Expression> {
+    let lhs = parse_mul(input)?;
+    left_assoc_add(lhs, input)
 }
