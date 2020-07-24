@@ -1,9 +1,9 @@
+use std::collections::HashMap;
 use std::fmt;
 use std::fs::File;
 use std::io;
 use std::io::prelude::*;
-
-fn main(){
+fn main() {
     let _dummy = vec![
         Operator::Paren,
         Operator::Sub,
@@ -12,7 +12,7 @@ fn main(){
         Operator::Custom(String::from("1")),
     ];
 
-    let input = "a - b * c - d / 86 ^ (-221) ^ (1123123 + 2 * 3)".chars();
+    let input = "a - b * c - das(10 + 6) / 86 ^ (-221) ^ (.1123123 + 2 * 3)".chars();
     let mut tokens = tokenise(&mut input.peekable()).into_iter().peekable();
     let expr = parse_add(&mut tokens).unwrap();
     texify(expr);
@@ -727,19 +727,34 @@ fn tokenise<I: Iterator<Item = char>>(input: &mut Peekable<I>) -> Vec<String> {
             chr if ['+', '-', '/', '*', '^', '(', ')'].contains(&chr) => {
                 output.push(chr.to_string())
             }
-            chr if chr.is_numeric() => {
+            chr if chr.is_digit(10) => {
                 let mut num = String::new();
+                let mut period = false;
                 num.push(chr);
                 while let Some(chr) = input.peek() {
-                    if chr.is_numeric() {
+                    if chr.is_digit(10) {
                         num.push(input.next().unwrap())
+                    } else if !period && chr.eq(&'.') {
+                        num.push(input.next().unwrap());
+                        period = true;
                     } else {
                         break;
                     }
                 }
                 output.push(num)
             }
-            chr if chr.is_alphabetic() => output.push(chr.to_string()),
+            chr if chr.is_alphabetic() => {
+                let mut word = String::new();
+                word.push(chr);
+                while let Some(chr) = input.peek() {
+                    if chr.is_alphabetic() || chr.is_digit(10) {
+                        word.push(input.next().unwrap())
+                    } else {
+			break;
+		    }
+                }
+                output.push(word)
+            }
             chr if [' '].contains(&chr) => (),
             _ => (),
         }
@@ -750,21 +765,34 @@ fn tokenise<I: Iterator<Item = char>>(input: &mut Peekable<I>) -> Vec<String> {
 fn parse_primary<I: Iterator<Item = String>>(input: &mut Peekable<I>) -> Option<Expression> {
     Some(match input.next() {
         Some(token) if token == "(" => {
-            
             let inner_expr = parse_add(input)?;
             match input.next() {
                 Some(tok) if tok == ")" => Expression::Unary(Operator::Paren, Box::new(inner_expr)),
                 _ => panic!("No closing parenthesis to match opening."),
             }
         }
-        Some(num) if num.chars().all(char::is_numeric) => {
-            Expression::integer_expression(num.parse::<i128>().unwrap())
-        }
-        Some(mut var) if var.chars().all(char::is_alphabetic) => {
-            Expression::variable_expression(var.remove(0))
-        }
-        Some(tok) => panic!("Primary expression expected. Found: {}", tok),
-        None => panic!("EOF reached."),
+        Some(tok) if tok.chars().all(char::is_alphabetic) && tok.len() > 1 => match input.next() {
+            Some(next) if next == "(" => {
+                let inner_expr = parse_add(input)?;
+                match input.next() {
+                    Some(next) if next == ")" => {
+                        Expression::Unary(Operator::Custom(tok), Box::new(inner_expr))
+                    }
+                    _ => panic!("No closing parenthessi to match opening paren."),
+                }
+            }
+	    _ => panic!("Expected opening parenthesis for mathematical functions!")
+        },
+        Some(mut tok) => tok
+            .parse::<i128>()
+            .map(|x| Expression::integer_expression(x))
+            .or::<std::string::ParseError>(
+                tok.parse::<f64>()
+                    .map(|x| Expression::real_expression(x))
+                    .or(Ok(Expression::variable_expression(tok.remove(0)))),
+            )
+            .unwrap(),
+        _ => panic!("EOF reached."),
     })
 }
 
