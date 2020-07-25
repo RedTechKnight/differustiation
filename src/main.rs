@@ -3,14 +3,14 @@ use std::fmt;
 use std::fs::File;
 use std::io;
 use std::io::prelude::*;
+#[cfg(test)]
+mod test;
+#[cfg(test)]
+    extern crate quickcheck;
+    #[cfg(test)]
+    #[macro_use(quickcheck)]
+    extern crate quickcheck_macros;
 fn main() {
-    let _dummy = vec![
-        Operator::Paren,
-        Operator::Sub,
-        Operator::Exp,
-        Operator::Neg,
-        Operator::Custom(String::from("1")),
-    ];
 
     let input = "a - b * c - das(10 + 6) / 86 ^ (-221) ^ (.1123123 + 2 * 3)".chars();
     let mut tokens = tokenise(&mut input.peekable()).into_iter().peekable();
