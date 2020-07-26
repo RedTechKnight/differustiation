@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::fs::File;
+use std::fs;
 use std::io;
 use std::io::prelude::*;
 #[cfg(test)]
@@ -17,13 +17,25 @@ fn main() {
     let expr = parse_add(&mut tokens).unwrap();
     texify(expr);
 }
+
 fn texify(expr: Expression) -> io::Result<()> {
-    let mut output = File::create("debug/debug.tex")?;
+    let mut output = fs::File::create("debug/debug.tex")?;
     output.write_all(b"\\documentclass{article}\n")?;
     output.write_all(b"\\begin{document}\n \\(")?;
     output.write_all(expr.as_tex().as_bytes())?;
     output.write_all(b"\\) \\end{document}")
 }
+
+fn texify_test(expr: Expression) -> io::Result<()> {
+    let mut options = fs::OpenOptions::new();
+    options.create(true);
+    options.append(true);
+    let mut output = options.open("debug/test.tex")?;
+    output.write_all(b"\\[")?;
+    output.write_all(expr.as_tex().as_bytes())?;
+    output.write_all(b"\\]\n")
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 enum Literal {
     Integer(i128),
@@ -690,7 +702,7 @@ impl Expression {
                 Operator::Sub => format!("{} - {}", left.as_tex(), right.as_tex()),
                 Operator::Div => format!("{} \\div {}", left.as_tex(), right.as_tex()),
                 Operator::Mul => format!("{} \\times {}", left.as_tex(), right.as_tex()),
-                Operator::Exp => format!("{}^{{{}}}", left.as_tex(), right.as_tex()),
+                Operator::Exp => format!("({}^{{{}}})", left.as_tex(), right.as_tex()),
                 _ => panic!("Impossible state reached"),
             },
             Expression::Variadic(operation, args) => {
