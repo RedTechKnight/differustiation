@@ -36,14 +36,15 @@ mod tests {
                     Box::new(Expression::arbitrary(g)),
                     Box::new(Expression::arbitrary(g)),
                 ),
-                1 => Expression::Lit(Term::arbitrary(g)),
-                _ => Expression::Unary(
+
+                1 => Expression::Unary(
                     match rand::random::<usize>() % 2 {
-                        0 => Operator::Neg,
-                        _ => Operator::Paren,
+                        0 => Operator::Paren,
+                        _ => Operator::Neg,
                     },
                     Box::new(Expression::arbitrary(g)),
                 ),
+                _ => Expression::Lit(Term::arbitrary(g)),
             }
         }
     }
@@ -100,7 +101,7 @@ mod tests {
 
     #[quickcheck]
     fn add_trees_flatten(expr: Expression) -> bool {
-        add_trees_flattened(expr.flatten_add())
+        add_trees_flattened(expr.strip_paren().flatten_comm(&Operator::Add))
     }
 
     fn mul_trees_flattened(expr: Expression) -> bool {
@@ -126,6 +127,92 @@ mod tests {
 
     #[quickcheck]
     fn mul_trees_flatten(expr: Expression) -> bool {
-        mul_trees_flattened(expr.flatten_mul())
+        mul_trees_flattened(expr.strip_paren().flatten_comm(&Operator::Mul))
+    }
+
+    fn no_nested_divs_1(expr: Expression) -> bool {
+        match expr {
+            Expression::Binary(Operator::Div, a, _)
+                if matches!(*a, Expression::Binary(Operator::Div, _, _)) =>
+            {
+                false
+            }
+            Expression::Unary(_, expr) => no_nested_divs_1(*expr),
+            Expression::Binary(_, lhs, rhs) => no_nested_divs_1(*lhs) && no_nested_divs_1(*rhs),
+            Expression::Variadic(_, exprs) => exprs.into_iter().all(no_nested_divs_1),
+            _ => true,
+        }
+    }
+
+    #[quickcheck]
+    fn no_nested_1(expr: Expression) -> bool {
+        no_nested_divs_1(expr.strip_paren().simplify_rational_1())
+    }
+
+    #[quickcheck]
+    fn no_nested_2(expr: Expression) -> bool {
+        no_nested_divs_2(expr.strip_paren().simplify_rational_2())
+    }
+
+    fn no_nested_divs_2(expr: Expression) -> bool {
+        match expr {
+            Expression::Binary(Operator::Div, _, b)
+                if matches!(*b, Expression::Binary(Operator::Div, _, _)) =>
+            {
+                false 
+            }
+            Expression::Unary(_, expr) => no_nested_divs_2(*expr),
+            Expression::Binary(_, lhs, rhs) => no_nested_divs_2(*lhs) && no_nested_divs_2(*rhs),
+            Expression::Variadic(_, exprs) => exprs.into_iter().all(no_nested_divs_2),
+            _ => true,
+        }
+    }
+
+    fn no_divs_in_muls(mut expr: Expression) -> bool {
+        let mut last = expr.clone();
+        match expr {
+            Expression::Binary(Operator::Mul, a, b) => {
+                !(matches!(*a, Expression::Binary(Operator::Div, _, _))
+                    || matches!(*b, Expression::Binary(Operator::Div, _, _)))
+                    && no_divs_in_muls(*a)
+                    && no_divs_in_muls(*b)
+            }
+            Expression::Variadic(Operator::Mul, exprs) => {
+                !exprs
+                    .iter()
+                    .any(|x| matches!(x, Expression::Binary(Operator::Div, _, _)))
+                    && exprs.into_iter().all(no_divs_in_muls)
+            }
+            Expression::Unary(_, expr) => no_divs_in_muls(*expr),
+            Expression::Binary(_, lhs, rhs) => no_divs_in_muls(*lhs) && no_divs_in_muls(*rhs),
+            Expression::Variadic(_, exprs) => exprs.into_iter().all(no_divs_in_muls),
+            _ => true,
+        }
+    }
+
+    #[quickcheck]
+    fn no_nested_3(expr: Expression) -> bool {
+        no_divs_in_muls(
+            expr.strip_paren()
+                .flatten_comm(&Operator::Mul)
+                .simplify_rational_3(),
+        )
+    }
+
+    fn all_exponents_explicit(expr: Expression) -> bool {
+        match expr {
+            Expression::Variadic(Operator::Mul, exprs) => {
+                exprs
+                    .iter()
+                    .all(|x| matches!(x, Expression::Binary(Operator::Exp, _, _)))
+                    && exprs.into_iter().all(all_exponents_explicit)
+            }
+            Expression::Unary(_, expr) => all_exponents_explicit(*expr),
+            Expression::Binary(_, lhs, rhs) => {
+                all_exponents_explicit(*lhs) && all_exponents_explicit(*rhs)
+            }
+            Expression::Variadic(_, exprs) => exprs.into_iter().all(all_exponents_explicit),
+            _ => true,
+        }
     }
 }

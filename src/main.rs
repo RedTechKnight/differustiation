@@ -10,13 +10,22 @@ extern crate quickcheck;
 #[macro_use(quickcheck)]
 extern crate quickcheck_macros;
 fn main() {
-    let input = "a - b * c - das(10 + 6) / 86 ^ (-221) ^
-(.1123123 + 2 * 3)"
-        .chars();
+    let input = "(a/d)*(a/e)*(a/f)".chars();
     let mut tokens = tokenise(&mut input.peekable()).into_iter().peekable();
     let expr = parse_add(&mut tokens).unwrap();
-    match texify(expr.simplify().explicit_coefficients().order().derive('x')) {
-	Ok(_) => println!("Great!"),
+
+    println!(
+        "{} and then {}",
+        expr,
+        expr.clone()
+            .strip_paren()
+            .flatten_comm(&Operator::Mul)
+            .simplify_rational_3()
+            .simplify_rational_1()
+            .simplify_rational_2()
+    );
+    match texify(expr.strip_paren().flatten_comm(&Operator::Mul).simplify_rational_3().simplify_rational_2().simplify_rational_1().explicit_exponents().collect_like_muls()) {
+        Ok(_) => println!("Great!"),
         _ => println!("Oh no!"),
     }
 }
@@ -179,30 +188,32 @@ impl Expression {
         Expression::Variadic(f, exprs)
     }
 
-    fn get_binary_expression(self) -> Option<(Operator, Expression, Expression)> {
-        if let Expression::Binary(f, a, b) = self {
-            Some((f, *a, *b))
-        } else {
-            None
-        }
-    }
     fn recurse<F: Fn(Expression) -> Expression>(self, rec: F) -> Expression {
         match self {
             l @ Expression::Lit(_) => l,
-            Expression::Unary(f, a) => Expression::unary_expression(f, rec(*a)),
-            Expression::Binary(f, a, b) => Expression::binary_expression(f, rec(*a), rec(*b)),
-            Expression::Variadic(f, exprs) => {
-                Expression::variadic_expression(f, exprs.into_iter().map(rec).collect())
+            Expression::Unary(f, a) => Expression::Unary(f, Box::new(rec(*a))),
+            Expression::Binary(f, a, b) => {
+                Expression::Binary(f, Box::new(rec(*a)), Box::new(rec(*b)))
             }
+            Expression::Variadic(f, exprs) => {
+                Expression::Variadic(f, exprs.into_iter().map(rec).collect())
+            }
+        }
+    }
+
+    fn strip_paren(self) -> Expression {
+        match self {
+            Expression::Unary(Operator::Paren, op) => op.strip_paren(),
+            other => other.recurse(Expression::strip_paren),
         }
     }
 
     fn factor_out_neg(self) -> Expression {
         match self {
-            Expression::Unary(Operator::Neg, a) => Expression::binary_expression(
+            Expression::Unary(Operator::Neg, a) => Expression::Binary(
                 Operator::Mul,
-                Expression::integer_expression(-1),
-                a.factor_out_neg(),
+                Box::new(Expression::integer_expression(-1)),
+                Box::new(a.factor_out_neg()),
             ),
             other => other.recurse(Expression::factor_out_neg),
         }
@@ -210,137 +221,117 @@ impl Expression {
 
     fn factor_out_sub(self) -> Expression {
         match self {
-            Expression::Binary(Operator::Sub, a, b) => Expression::binary_expression(
+            Expression::Binary(Operator::Sub, a, b) => Expression::Binary(
                 Operator::Add,
-                a.factor_out_sub(),
-                Expression::binary_expression(
+                Box::new(a.factor_out_sub()),
+                Box::new(Expression::Binary(
                     Operator::Mul,
-                    Expression::integer_expression(-1),
-                    b.factor_out_sub(),
-                ),
+                    Box::new(Expression::integer_expression(-1)),
+                    Box::new(b.factor_out_sub()),
+                )),
             ),
             other => other.recurse(Expression::factor_out_sub),
         }
     }
 
-    fn flatten_add(self) -> Expression {
+    fn flatten_comm(self, operator: &Operator) -> Expression {
         match self {
-            Expression::Binary(Operator::Add, a, b) => match (a.flatten_add(), b.flatten_add()) {
-                (
-                    Expression::Variadic(Operator::Add, a),
-                    Expression::Variadic(Operator::Add, b),
-                ) => Expression::variadic_expression(
-                    Operator::Add,
-                    a.into_iter().chain(b.into_iter()).collect(),
-                ),
-                (Expression::Variadic(Operator::Add, a), b) => Expression::variadic_expression(
-                    Operator::Add,
-                    a.into_iter().chain(vec![b].into_iter()).collect(),
-                ),
-                (a, Expression::Variadic(Operator::Add, b)) => Expression::variadic_expression(
-                    Operator::Add,
-                    b.into_iter().chain(vec![a].into_iter()).collect(),
-                ),
-                (a, b) => Expression::Variadic(Operator::Add, vec![a, b]),
-            },
-            other => other.recurse(Expression::flatten_add),
-        }
-    }
-
-    fn flatten_mul(self) -> Expression {
-        match self {
-            Expression::Binary(Operator::Mul, a, b) => match (a.flatten_mul(), b.flatten_mul()) {
-                (
-                    Expression::Variadic(Operator::Mul, a),
-                    Expression::Variadic(Operator::Mul, b),
-                ) => Expression::variadic_expression(
-                    Operator::Mul,
-                    a.into_iter().chain(b.into_iter()).collect(),
-                ),
-                (Expression::Variadic(Operator::Mul, a), b) => Expression::variadic_expression(
-                    Operator::Mul,
-                    a.into_iter().chain(vec![b].into_iter()).collect(),
-                ),
-                (a, Expression::Variadic(Operator::Mul, b)) => Expression::variadic_expression(
-                    Operator::Mul,
-                    b.into_iter().chain(vec![a].into_iter()).collect(),
-                ),
-                (a, b) => Expression::Variadic(Operator::Mul, vec![a, b]),
-            },
-            other => other.recurse(Expression::flatten_mul),
+            Expression::Binary(op, a, b) if operator == &op => {
+                let mut terms = Vec::new();
+                let mut append = |x: Expression| match x.flatten_comm(operator) {
+                    Expression::Variadic(op, mut exprs) if &op == operator => {
+                        terms.append(&mut exprs)
+                    }
+                    single => terms.push(single),
+                };
+                append(*a);
+                append(*b);
+                Expression::Variadic(operator.clone(), terms)
+            }
+            other => other.recurse(|x| x.flatten_comm(operator)),
         }
     }
 
     fn simplify_rational_1(self) -> Expression {
         match self {
-            Expression::Binary(Operator::Div, num, denom) => {
-                match (num.simplify_rational_1(), denom.simplify_rational_1()) {
-                    (Expression::Binary(Operator::Div, a_num, a_denom), denom) => {
-                        Expression::binary_expression(
-                            Operator::Div,
-                            *a_num,
-                            Expression::binary_expression(Operator::Mul, *a_denom, denom),
-                        )
-                    }
-                    (a, b) => Expression::binary_expression(Operator::Div, a, b),
-                }
-            }
+            Expression::Binary(Operator::Div, numer, denom) => match numer.simplify_rational_1() {
+                Expression::Binary(Operator::Div, numer_numer, numer_denom) => Expression::Binary(
+                    Operator::Div,
+                    numer_numer,
+                    Box::new(Expression::Binary(
+                        Operator::Mul,
+                        numer_denom,
+                        Box::new(denom.simplify_rational_1()),
+                    )),
+                )
+                .simplify_rational_1(),
+                numer => Expression::Binary(
+                    Operator::Div,
+                    Box::new(numer),
+                    Box::new(denom.simplify_rational_1()),
+                ),
+            },
             other => other.recurse(Expression::simplify_rational_1),
         }
     }
 
     fn simplify_rational_2(self) -> Expression {
         match self {
-            Expression::Binary(Operator::Div, num, denom) => {
-                match (num.simplify_rational_2(), denom.simplify_rational_2()) {
-                    (num, Expression::Binary(Operator::Div, b_num, b_denom)) => {
-                        Expression::binary_expression(
-                            Operator::Div,
-                            Expression::binary_expression(Operator::Mul, num, *b_denom),
-                            *b_num,
-                        )
-                    }
-                    (a, b) => Expression::binary_expression(Operator::Div, a, b),
-                }
-            }
+            Expression::Binary(Operator::Div, numer, denom) => match denom.simplify_rational_2() {
+                Expression::Binary(Operator::Div, denom_numer, denom_denom) => Expression::Binary(
+                    Operator::Div,
+                    Box::new(Expression::Binary(
+                        Operator::Mul,
+                        denom_denom,
+                        Box::new(numer.simplify_rational_2()),
+                    )),
+                    denom_numer,
+                )
+                .simplify_rational_2(),
+                denom => Expression::Binary(
+                    Operator::Div,
+                    Box::new(numer.simplify_rational_2()),
+                    Box::new(denom),
+                ),
+            },
             other => other.recurse(Expression::simplify_rational_2),
         }
     }
 
     fn simplify_rational_3(self) -> Expression {
         match self {
-            Expression::Binary(Operator::Mul, num, denom) => {
-                match (num.simplify_rational_3(), denom.simplify_rational_3()) {
-                    (num, Expression::Binary(Operator::Div, b_num, b_denom)) => {
-                        Expression::binary_expression(
-                            Operator::Div,
-                            Expression::binary_expression(Operator::Mul, num, *b_num),
-                            *b_denom,
-                        )
-                    }
-                    (a, b) => Expression::binary_expression(Operator::Mul, a, b),
-                }
-            }
             Expression::Variadic(Operator::Mul, mut exprs) => {
-                let first_div_node = exprs.iter().enumerate().find(|(_, v)| {
-                    if let Expression::Binary(Operator::Div, _, _) = v {
-                        true
-                    } else {
-                        false
+                match exprs
+                    .iter_mut()
+                    .position(|x| matches!(*x, Expression::Binary(Operator::Div, _, _)))
+                {
+                    Some(index) => {
+                        if let Expression::Binary(Operator::Div, numer, denom) = exprs.remove(index)
+                        {
+                            exprs.push(*numer);
+                            Expression::Binary(
+                                Operator::Div,
+                                Box::new(Expression::Variadic(
+                                    Operator::Mul,
+                                    exprs
+                                        .into_iter()
+                                        .map(Expression::simplify_rational_3)
+                                        .collect(),
+                                )),
+                                Box::new(denom.simplify_rational_3()),
+                            )
+                            .simplify_rational_3()
+                        } else {
+                            panic!("Unreachable!")
+                        }
                     }
-                });
-                match first_div_node {
-                    Some(first_div_node) => {
-                        let node = first_div_node.0;
-                        let (_, num, denom) = exprs.remove(node).get_binary_expression().unwrap();
-                        exprs.push(num);
-                        Expression::binary_expression(
-                            Operator::Div,
-                            Expression::variadic_expression(Operator::Mul, exprs),
-                            denom,
-                        )
-                    }
-                    _ => Expression::variadic_expression(Operator::Mul, exprs),
+                    None => Expression::Variadic(
+                        Operator::Mul,
+                        exprs
+                            .into_iter()
+                            .map(Expression::simplify_rational_3)
+                            .collect(),
+                    ),
                 }
             }
             other => other.recurse(Expression::simplify_rational_3),
@@ -571,8 +562,8 @@ impl Expression {
         let simplified = self
             .factor_out_neg()
             .factor_out_sub()
-            .flatten_add()
-            .flatten_mul()
+            .flatten_comm(&Operator::Add)
+            .flatten_comm(&Operator::Mul)
             .simplify_rational_1()
             .simplify_rational_2()
             .simplify_rational_3()
