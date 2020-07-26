@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt;
 use std::fs;
 use std::io;
@@ -6,34 +5,28 @@ use std::io::prelude::*;
 #[cfg(test)]
 mod test;
 #[cfg(test)]
-    extern crate quickcheck;
-    #[cfg(test)]
-    #[macro_use(quickcheck)]
-    extern crate quickcheck_macros;
+extern crate quickcheck;
+#[cfg(test)]
+#[macro_use(quickcheck)]
+extern crate quickcheck_macros;
 fn main() {
-
-    let input = "a - b * c - das(10 + 6) / 86 ^ (-221) ^ (.1123123 + 2 * 3)".chars();
+    let input = "a - b * c - das(10 + 6) / 86 ^ (-221) ^
+(.1123123 + 2 * 3)"
+        .chars();
     let mut tokens = tokenise(&mut input.peekable()).into_iter().peekable();
     let expr = parse_add(&mut tokens).unwrap();
-    texify(expr);
+    match texify(expr.simplify().explicit_coefficients().order().derive('x')) {
+	Ok(_) => println!("Great!"),
+        _ => println!("Oh no!"),
+    }
 }
 
 fn texify(expr: Expression) -> io::Result<()> {
     let mut output = fs::File::create("debug/debug.tex")?;
     output.write_all(b"\\documentclass{article}\n")?;
     output.write_all(b"\\begin{document}\n \\(")?;
-    output.write_all(expr.as_tex().as_bytes())?;
+    output.write_all(expr.into_tex().as_bytes())?;
     output.write_all(b"\\) \\end{document}")
-}
-
-fn texify_test(expr: Expression) -> io::Result<()> {
-    let mut options = fs::OpenOptions::new();
-    options.create(true);
-    options.append(true);
-    let mut output = options.open("debug/test.tex")?;
-    output.write_all(b"\\[")?;
-    output.write_all(expr.as_tex().as_bytes())?;
-    output.write_all(b"\\]\n")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
@@ -64,20 +57,6 @@ impl Literal {
         Literal::Integer(a)
     }
 
-    fn as_integer(self) -> Literal {
-        if let Literal::Real(a) = self {
-            return Literal::Integer(a as i128);
-        }
-        self
-    }
-
-    fn get_integer(self) -> Option<i128> {
-        match self {
-            Literal::Integer(a) => Some(a),
-            _ => None,
-        }
-    }
-
     fn _as_real(self) -> Literal {
         if let Literal::Integer(a) = self {
             return Literal::Real(a as f64);
@@ -101,15 +80,6 @@ impl fmt::Display for Term {
 }
 
 impl Term {
-    fn from_string(mut input: String) -> Term {
-        match input {
-            mut input if input.chars().all(char::is_alphabetic) => Term::Variable(input.remove(0)),
-            input if input.chars().all(char::is_numeric) => {
-                Term::Numeric(Literal::Integer(input.parse().unwrap()))
-            }
-            _ => Term::real_term(0.0),
-        }
-    }
     fn real_term(a: f64) -> Term {
         Term::Numeric(Literal::new_real_literal(a))
     }
@@ -122,7 +92,7 @@ impl Term {
         Term::Variable(a)
     }
 
-    fn as_tex(self) -> String {
+    fn into_tex(self) -> String {
         match self {
             Term::Numeric(Literal::Integer(i)) => i.to_string(),
             Term::Numeric(Literal::Real(r)) => r.to_string(),
@@ -176,7 +146,7 @@ impl fmt::Display for Expression {
                 "({} {})",
                 op,
                 exprs
-                    .into_iter()
+                    .iter()
                     .map(|x| x.to_string() + " ")
                     .collect::<String>()
             ),
@@ -185,9 +155,6 @@ impl fmt::Display for Expression {
 }
 
 impl Expression {
-    fn term_expression(t: Term) -> Expression {
-        Expression::Lit(t)
-    }
     fn variable_expression(a: char) -> Expression {
         Expression::Lit(Term::variable_term(a))
     }
@@ -214,9 +181,10 @@ impl Expression {
 
     fn get_binary_expression(self) -> Option<(Operator, Expression, Expression)> {
         if let Expression::Binary(f, a, b) = self {
-            return Some((f, *a, *b));
+            Some((f, *a, *b))
+        } else {
+            None
         }
-        None
     }
     fn recurse<F: Fn(Expression) -> Expression>(self, rec: F) -> Expression {
         match self {
@@ -231,30 +199,26 @@ impl Expression {
 
     fn factor_out_neg(self) -> Expression {
         match self {
-            Expression::Unary(Operator::Neg, a) => {
-                return Expression::binary_expression(
-                    Operator::Mul,
-                    Expression::integer_expression(-1),
-                    a.factor_out_neg(),
-                );
-            }
+            Expression::Unary(Operator::Neg, a) => Expression::binary_expression(
+                Operator::Mul,
+                Expression::integer_expression(-1),
+                a.factor_out_neg(),
+            ),
             other => other.recurse(Expression::factor_out_neg),
         }
     }
 
     fn factor_out_sub(self) -> Expression {
         match self {
-            Expression::Binary(Operator::Sub, a, b) => {
-                return Expression::binary_expression(
-                    Operator::Add,
-                    a.factor_out_sub(),
-                    Expression::binary_expression(
-                        Operator::Mul,
-                        Expression::integer_expression(-1),
-                        b.factor_out_sub(),
-                    ),
-                )
-            }
+            Expression::Binary(Operator::Sub, a, b) => Expression::binary_expression(
+                Operator::Add,
+                a.factor_out_sub(),
+                Expression::binary_expression(
+                    Operator::Mul,
+                    Expression::integer_expression(-1),
+                    b.factor_out_sub(),
+                ),
+            ),
             other => other.recurse(Expression::factor_out_sub),
         }
     }
@@ -360,9 +324,10 @@ impl Expression {
             Expression::Variadic(Operator::Mul, mut exprs) => {
                 let first_div_node = exprs.iter().enumerate().find(|(_, v)| {
                     if let Expression::Binary(Operator::Div, _, _) = v {
-                        return true;
+                        true
+                    } else {
+                        false
                     }
-                    return false;
                 });
                 match first_div_node {
                     Some(first_div_node) => {
@@ -439,13 +404,10 @@ impl Expression {
             Expression::Variadic(Operator::Mul, mut exprs) => {
                 let mut bases = Vec::new();
                 for expr in &exprs {
-                    match expr {
-                        Expression::Binary(Operator::Exp, base, _) => {
-                            if !bases.contains(base) {
-                                bases.push((*base).clone())
-                            }
+                    if let Expression::Binary(Operator::Exp, base, _) = expr {
+                        if !bases.contains(base) {
+                            bases.push((*base).clone())
                         }
-                        _ => (),
                     }
                 }
                 let mut terms: Vec<(Expression, Vec<Expression>)> = bases
@@ -457,13 +419,10 @@ impl Expression {
 
                 for term in &mut terms {
                     for expr in &mut exprs {
-                        match expr {
-                            Expression::Binary(Operator::Exp, base, exp) => {
-                                if **base == term.0 {
-                                    term.1.push(*exp.clone())
-                                }
+                        if let Expression::Binary(Operator::Exp, base, exp) = expr {
+                            if **base == term.0 {
+                                term.1.push(*exp.clone())
                             }
-                            _ => (),
                         }
                     }
                 }
@@ -553,11 +512,14 @@ impl Expression {
 
     fn comparer(&self, b: &Expression) -> std::cmp::Ordering {
         match (self, b) {
-            (Expression::Lit(Term::Numeric(a)), Expression::Lit(Term::Numeric(b))) => a
-                .as_integer()
-                .get_integer()
-                .unwrap()
-                .cmp(&b.as_integer().get_integer().unwrap()),
+            (Expression::Lit(Term::Numeric(a)), Expression::Lit(Term::Numeric(b))) => {
+                match (a, b) {
+                    (Literal::Integer(a), Literal::Integer(b)) => a.cmp(b),
+                    (Literal::Real(a), Literal::Integer(b)) => a.partial_cmp(&(*b as f64)).unwrap(),
+                    (Literal::Integer(a), Literal::Real(b)) => a.cmp(&(*b as i128)),
+                    (Literal::Real(a), Literal::Real(b)) => a.partial_cmp(b).unwrap(),
+                }
+            }
             (Expression::Lit(Term::Numeric(_)), _) => std::cmp::Ordering::Less,
             (Expression::Lit(Term::Variable(a)), Expression::Lit(Term::Variable(b))) => a.cmp(b),
             (Expression::Lit(Term::Variable(_)), _) => std::cmp::Ordering::Less,
@@ -688,34 +650,34 @@ impl Expression {
         }
     }
 
-    fn as_tex(self) -> String {
+    fn into_tex(self) -> String {
         match self {
-            Expression::Lit(literal) => literal.as_tex(),
+            Expression::Lit(literal) => literal.into_tex(),
             Expression::Unary(operator, operand) => match operator {
-                Operator::Paren => format!("({})", operand.as_tex()),
-                Operator::Neg => format!("-{}", operand.as_tex()),
-                Operator::Custom(fun_name) => format!("{}({})", fun_name, operand.as_tex()),
+                Operator::Paren => format!("({})", operand.into_tex()),
+                Operator::Neg => format!("-{}", operand.into_tex()),
+                Operator::Custom(fun_name) => format!("{}({})", fun_name, operand.into_tex()),
                 _ => panic!("Impossible state reached"),
             },
             Expression::Binary(operator, left, right) => match operator {
-                Operator::Add => format!("{} + {}", left.as_tex(), right.as_tex()),
-                Operator::Sub => format!("{} - {}", left.as_tex(), right.as_tex()),
-                Operator::Div => format!("{} \\div {}", left.as_tex(), right.as_tex()),
-                Operator::Mul => format!("{} \\times {}", left.as_tex(), right.as_tex()),
-                Operator::Exp => format!("({}^{{{}}})", left.as_tex(), right.as_tex()),
+                Operator::Add => format!("{} + {}", left.into_tex(), right.into_tex()),
+                Operator::Sub => format!("{} - {}", left.into_tex(), right.into_tex()),
+                Operator::Div => format!("{} \\div {}", left.into_tex(), right.into_tex()),
+                Operator::Mul => format!("{} \\times {}", left.into_tex(), right.into_tex()),
+                Operator::Exp => format!("({}^{{{}}})", left.into_tex(), right.into_tex()),
                 _ => panic!("Impossible state reached"),
             },
             Expression::Variadic(operation, args) => {
                 let mut list = args
                     .into_iter()
-                    .map(|x| x.as_tex())
+                    .map(|x| x.into_tex())
                     .collect::<Vec<String>>();
                 let mut output = Vec::new();
-                if list.len() > 0 {
+                if !list.is_empty() {
                     output.push(list.remove(0));
                 }
 
-                while list.len() > 0 {
+                while !list.is_empty() {
                     output.push(
                         match operation {
                             Operator::Add => " + ",
@@ -762,8 +724,8 @@ fn tokenise<I: Iterator<Item = char>>(input: &mut Peekable<I>) -> Vec<String> {
                     if chr.is_alphabetic() || chr.is_digit(10) {
                         word.push(input.next().unwrap())
                     } else {
-			break;
-		    }
+                        break;
+                    }
                 }
                 output.push(word)
             }
@@ -793,17 +755,15 @@ fn parse_primary<I: Iterator<Item = String>>(input: &mut Peekable<I>) -> Option<
                     _ => panic!("No closing parenthessi to match opening paren."),
                 }
             }
-	    _ => panic!("Expected opening parenthesis for mathematical functions!")
+            _ => panic!("Expected opening parenthesis for mathematical functions!"),
         },
-        Some(mut tok) => tok
-            .parse::<i128>()
-            .map(|x| Expression::integer_expression(x))
-            .or::<std::string::ParseError>(
-                tok.parse::<f64>()
-                    .map(|x| Expression::real_expression(x))
-                    .or(Ok(Expression::variable_expression(tok.remove(0)))),
-            )
-            .unwrap(),
+        Some(mut tok) => match tok.parse::<i128>() {
+            Ok(succ) => Expression::integer_expression(succ),
+            _ => match tok.parse::<f64>() {
+                Ok(succ) => Expression::real_expression(succ),
+                _ => Expression::variable_expression(tok.remove(0)),
+            },
+        },
         _ => panic!("EOF reached."),
     })
 }
