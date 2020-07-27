@@ -24,7 +24,18 @@ fn main() {
             .simplify_rational_1()
             .simplify_rational_2()
     );
-    match texify(expr.strip_paren().flatten_comm(&Operator::Mul).simplify_rational_3().simplify_rational_2().simplify_rational_1().explicit_exponents().collect_like_muls()) {
+    match texify(
+        expr.strip_paren()
+            .flatten_comm(&Operator::Mul)
+            .simplify_rational_3()
+            .simplify_rational_2()
+            .simplify_rational_1()
+            .flatten_comm(&Operator::Mul)
+            .explicit_exponents()
+            .collect_like_muls()
+	    .explicit_coefficients()
+	    ,
+    ) {
         Ok(_) => println!("Great!"),
         _ => println!("Oh no!"),
     }
@@ -340,25 +351,23 @@ impl Expression {
 
     fn explicit_exponents(self) -> Expression {
         match self {
-            Expression::Variadic(Operator::Mul, mut exprs) => {
-                exprs = exprs
+            Expression::Variadic(Operator::Mul, exprs) => {
+                let exprs = exprs
                     .into_iter()
-                    .map(Expression::explicit_exponents)
+                    .map(|expr| match expr {
+                        Expression::Binary(Operator::Exp, lhs, rhs) => Expression::Binary(
+                            Operator::Exp,
+                            Box::new(lhs.explicit_exponents()),
+                            Box::new(rhs.explicit_exponents()),
+                        ),
+                        other => Expression::Binary(
+                            Operator::Exp,
+                            Box::new(other.explicit_exponents()),
+                            Box::new(Expression::integer_expression(1)),
+                        ),
+                    })
                     .collect();
-                for expr in exprs.iter_mut() {
-                    match expr {
-                        Expression::Binary(Operator::Exp, _, _) => (),
-                        expr => {
-                            let base = std::mem::replace(expr, Expression::integer_expression(1));
-                            *expr = Expression::binary_expression(
-                                Operator::Exp,
-                                base,
-                                Expression::integer_expression(1),
-                            );
-                        }
-                    }
-                }
-                Expression::variadic_expression(Operator::Mul, exprs)
+                Expression::Variadic(Operator::Mul, exprs)
             }
             other => other.recurse(Expression::explicit_exponents),
         }
@@ -366,25 +375,23 @@ impl Expression {
 
     fn explicit_coefficients(self) -> Expression {
         match self {
-            Expression::Variadic(Operator::Add, mut exprs) => {
-                exprs = exprs
+            Expression::Variadic(Operator::Add, exprs) => {
+                let exprs = exprs
                     .into_iter()
-                    .map(Expression::explicit_coefficients)
+                    .map(|expr| match expr {
+                        Expression::Binary(Operator::Mul, lhs, rhs) => Expression::Binary(
+                            Operator::Mul,
+                            Box::new(lhs.explicit_coefficients()),
+                            Box::new(rhs.explicit_coefficients()),
+                        ),
+                        other => Expression::Binary(
+                            Operator::Mul,
+                            Box::new(Expression::integer_expression(1)),
+			    Box::new(other.explicit_coefficients()),
+                        ),
+                    })
                     .collect();
-                for expr in exprs.iter_mut() {
-                    match expr {
-                        Expression::Binary(Operator::Mul, _, _) => (),
-                        expr => {
-                            let base = std::mem::replace(expr, Expression::integer_expression(1));
-                            *expr = Expression::binary_expression(
-                                Operator::Mul,
-                                Expression::integer_expression(1),
-                                base,
-                            );
-                        }
-                    }
-                }
-                Expression::variadic_expression(Operator::Add, exprs)
+                Expression::Variadic(Operator::Add, exprs)
             }
             other => other.recurse(Expression::explicit_coefficients),
         }

@@ -159,7 +159,7 @@ mod tests {
             Expression::Binary(Operator::Div, _, b)
                 if matches!(*b, Expression::Binary(Operator::Div, _, _)) =>
             {
-                false 
+                false
             }
             Expression::Unary(_, expr) => no_nested_divs_2(*expr),
             Expression::Binary(_, lhs, rhs) => no_nested_divs_2(*lhs) && no_nested_divs_2(*rhs),
@@ -199,20 +199,25 @@ mod tests {
         )
     }
 
-    fn all_exponents_explicit(expr: Expression) -> bool {
+    fn all_exponents_in_mul(expr: Expression) -> bool {
         match expr {
             Expression::Variadic(Operator::Mul, exprs) => {
                 exprs
                     .iter()
                     .all(|x| matches!(x, Expression::Binary(Operator::Exp, _, _)))
-                    && exprs.into_iter().all(all_exponents_explicit)
+                    && exprs.into_iter().all(all_exponents_in_mul)
             }
-            Expression::Unary(_, expr) => all_exponents_explicit(*expr),
+            Expression::Unary(_, expr) => all_exponents_in_mul(*expr),
             Expression::Binary(_, lhs, rhs) => {
-                all_exponents_explicit(*lhs) && all_exponents_explicit(*rhs)
+                all_exponents_in_mul(*lhs) && all_exponents_in_mul(*rhs)
             }
-            Expression::Variadic(_, exprs) => exprs.into_iter().all(all_exponents_explicit),
+            Expression::Variadic(_, exprs) => exprs.into_iter().all(all_exponents_in_mul),
             _ => true,
         }
+    }
+
+    #[quickcheck]
+    fn are_all_exponents_in_mul(expr: Expression) -> bool {
+	all_exponents_in_mul(expr.strip_paren().flatten_comm(&Operator::Mul).explicit_exponents())
     }
 }
