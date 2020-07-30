@@ -12,10 +12,16 @@ extern crate quickcheck;
 #[macro_use(quickcheck)]
 extern crate quickcheck_macros;
 fn main() {
-    let input = "4 * x ^ 3 + 3 * x^2".chars();
+    let input = "tan(x^2)".chars();
     let mut tokens = tokenise(&mut input.peekable()).into_iter().peekable();
     let expr = parse_add(&mut tokens).unwrap();
-
+    let one = Expression::integer_expression(1);
+    let zero = Expression::integer_expression(0);
+    dbg!(one.equal(&zero));
+    dbg!(
+        Expression::Variadic(Operator::Mul, vec![one.clone(), one.clone(), one])
+            .simplify_constants()
+    );
     println!(
         "{} and then {}",
         expr,
@@ -26,7 +32,9 @@ fn main() {
             .simplify_rational_1()
             .simplify_rational_2()
     );
-    match texify(expr.simplify().simplify().derive('x')) {
+    let answer = expr.simplify().derive('x').simplify();
+    println!("{}", answer);
+    match texify(answer) {
         Ok(_) => println!("Great!"),
         _ => println!("Oh no!"),
     }
@@ -113,8 +121,8 @@ enum Operator {
 impl fmt::Display for Operator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Operator::Paren => write!(f, ""),
-            Operator::Neg => write!(f, "-"),
+            Operator::Paren => write!(f, "p"),
+            Operator::Neg => write!(f, "n"),
             Operator::Add => write!(f, "+"),
             Operator::Mul => write!(f, "*"),
             Operator::Sub => write!(f, "-"),
@@ -187,10 +195,9 @@ impl Expression {
 
     fn factor_out_neg(self) -> Expression {
         match self {
-            Expression::Unary(Operator::Neg, a) => Expression::Binary(
+            Expression::Unary(Operator::Neg, a) => Expression::Variadic(
                 Operator::Mul,
-                Box::new(Expression::integer_expression(-1)),
-                Box::new(a.factor_out_neg()),
+                vec![Expression::integer_expression(-1), a.factor_out_neg()],
             ),
             other => other.recurse(Expression::factor_out_neg),
         }
@@ -198,17 +205,23 @@ impl Expression {
 
     fn factor_out_sub(self) -> Expression {
         match self {
-            Expression::Binary(Operator::Sub, a, b) => Expression::Binary(
+            Expression::Binary(Operator::Sub, a, b) => Expression::Variadic(
                 Operator::Add,
-                Box::new(a.factor_out_sub()),
-                Box::new(Expression::Binary(
-                    Operator::Mul,
-                    Box::new(Expression::integer_expression(-1)),
-                    Box::new(b.factor_out_sub()),
-                )),
+                vec![
+                    a.factor_out_sub(),
+                    Expression::Variadic(
+                        Operator::Mul,
+                        vec![Expression::integer_expression(-1), b.factor_out_sub()],
+                    ),
+                ],
             ),
             other => other.recurse(Expression::factor_out_sub),
         }
+    }
+
+    fn flatten(self) -> Expression {
+        self.flatten_comm(&Operator::Add)
+            .flatten_comm(&Operator::Mul)
     }
 
     fn flatten_comm(self, operator: &Operator) -> Expression {
@@ -226,13 +239,13 @@ impl Expression {
                 Expression::Variadic(operator.clone(), terms)
             }
             Expression::Variadic(op, exprs) if &op == operator => {
-                let  exprs = exprs
+                let exprs = exprs
                     .into_iter()
                     .map(|x| x.flatten_comm(operator))
                     .collect::<Vec<Expression>>();
-                let (mut to_append, mut rest): (Vec<Expression>,Vec<Expression>) = exprs
+                let (mut to_append, mut rest): (Vec<Expression>, Vec<Expression>) = exprs
                     .into_iter()
-		    .partition(|x| matches!(x,Expression::Variadic(op,_) if op == operator));
+                    .partition(|x| matches!(x,Expression::Variadic(op,_) if op == operator));
                 let mut append = |x: Expression| match x.flatten_comm(operator) {
                     Expression::Variadic(op, mut exprs) if &op == operator => {
                         rest.append(&mut exprs)
@@ -240,8 +253,8 @@ impl Expression {
                     single => rest.push(single),
                 };
                 while !to_append.is_empty() {
-		    append(to_append.remove(0))
-		}
+                    append(to_append.remove(0))
+                }
                 Expression::Variadic(operator.clone(), rest)
             }
             other => other.recurse(|x| x.flatten_comm(operator)),
@@ -277,8 +290,7 @@ impl Expression {
                     Operator::Div,
                     Box::new(Expression::Variadic(
                         Operator::Mul,
-                        vec![*denom_denom,
-                        numer.simplify_rational_2()],
+                        vec![*denom_denom, numer.simplify_rational_2()],
                     )),
                     denom_numer,
                 )
@@ -436,13 +448,15 @@ impl Expression {
         let one_i = Expression::integer_expression(1);
         let one_r = Expression::real_expression(1.0);
         match self {
-            Expression::Binary(Operator::Exp, base, pow) => {
+            Expression::Binary(Operator::Exp, mut base, mut pow) => {
+                *base = base.simplify_constants();
+                *pow = pow.simplify_constants();
                 if pow.equal(&one_i)
                     || base.equal(&one_i)
                     || pow.equal(&one_r)
                     || base.equal(&one_r)
                 {
-                    base.simplify_constants()
+                    *base
                 } else if (pow.equal(&zero_i) || pow.equal(&zero_r))
                     && (!base.equal(&zero_i) || !base.equal(&zero_r))
                 {
@@ -452,20 +466,19 @@ impl Expression {
                 {
                     zero_i
                 } else {
-                    Expression::Binary(
-                        Operator::Exp,
-                        Box::new(base.simplify_constants()),
-                        Box::new(pow.simplify_constants()),
-                    )
+                    Expression::Binary(Operator::Exp, base, pow)
                 }
             }
             Expression::Variadic(Operator::Mul, mut exprs) => {
-                if exprs.len() == 1 {
-                    exprs.remove(0).simplify_constants()
+                exprs = exprs
+                    .into_iter()
+                    .map(Expression::simplify_constants)
+                    .collect();
+                exprs.retain(|expr| !(expr.equal(&one_i) || expr.equal(&one_r)));
+                if exprs.is_empty() {
+                    Expression::integer_expression(1)
                 } else if exprs.iter().any(|x| x.equal(&zero_i) || x.equal(&zero_r)) {
                     zero_i
-                } else if exprs.iter().all(|x| x.equal(&one_r) || x.equal(&one_i)) {
-                    one_i
                 } else if exprs
                     .iter()
                     .any(|x| matches!(x, Expression::Lit(Term::Numeric(_))))
@@ -474,36 +487,33 @@ impl Expression {
                         .into_iter()
                         .partition(|x| matches!(x, Expression::Lit(Term::Numeric(_))));
                     exprs.push(Expression::Lit(Term::Numeric(consts.into_iter().fold(
-                        Literal::Integer(0),
+                        Literal::Integer(1),
                         |acc, expr| match expr {
                             Expression::Lit(Term::Numeric(lit)) => {
                                 Literal::apply(acc, lit, i128::mul, f64::mul)
                             }
-                            _ => acc,
+                            _ => panic!("Non constant!"),
                         },
                     ))));
-                    Expression::Variadic(
-                        Operator::Add,
-                        exprs
-                            .into_iter()
-                            .filter(|x| !x.equal(&zero_r) && !x.equal(&zero_i))
-                            .map(Expression::simplify_constants)
-                            .collect(),
-                    )
+                    if exprs.len() == 1 {
+                        exprs.remove(0)
+                    } else {
+                        Expression::Variadic(Operator::Mul, exprs)
+                    }
+                } else if exprs.len() == 1 {
+                    exprs.remove(0).simplify_constants()
                 } else {
-                    Expression::Variadic(
-                        Operator::Mul,
-                        exprs
-                            .into_iter()
-                            .filter(|x| !x.equal(&one_i) && !x.equal(&one_r))
-                            .map(Expression::simplify_constants)
-                            .collect(),
-                    )
+                    Expression::Variadic(Operator::Mul, exprs)
                 }
             }
             Expression::Variadic(Operator::Add, mut exprs) => {
-                if exprs.len() == 1 {
-                    exprs.remove(0).simplify_constants()
+                exprs = exprs
+                    .into_iter()
+                    .map(Expression::simplify_constants)
+                    .collect();
+                exprs.retain(|expr| !(expr.equal(&zero_i) || expr.equal(&zero_r)));
+                if exprs.is_empty() {
+                    Expression::integer_expression(0)
                 } else if exprs
                     .iter()
                     .any(|x| matches!(x, Expression::Lit(Term::Numeric(_))))
@@ -517,26 +527,18 @@ impl Expression {
                             Expression::Lit(Term::Numeric(lit)) => {
                                 Literal::apply(acc, lit, i128::add, f64::add)
                             }
-                            _ => acc,
+                            _ => panic!("Non constants!"),
                         },
                     ))));
-                    Expression::Variadic(
-                        Operator::Add,
-                        exprs
-                            .into_iter()
-                            .filter(|x| !x.equal(&zero_r) && !x.equal(&zero_i))
-                            .map(Expression::simplify_constants)
-                            .collect(),
-                    )
+                    if exprs.len() == 1 {
+                        exprs.remove(0)
+                    } else {
+                        Expression::Variadic(Operator::Add, exprs)
+                    }
+                } else if exprs.len() == 1 {
+                    exprs.remove(0).simplify_constants()
                 } else {
-                    Expression::Variadic(
-                        Operator::Add,
-                        exprs
-                            .into_iter()
-                            .filter(|x| !x.equal(&zero_r) && !x.equal(&zero_i))
-                            .map(Expression::simplify_constants)
-                            .collect(),
-                    )
+                    Expression::Variadic(Operator::Add, exprs)
                 }
             }
             other => other.recurse(Expression::simplify_constants),
@@ -612,16 +614,14 @@ impl Expression {
             .strip_paren()
             .factor_out_neg()
             .factor_out_sub()
-            .flatten_comm(&Operator::Add)
-            .flatten_comm(&Operator::Mul)
+            .flatten()
             .simplify_rational_1()
             .simplify_rational_2()
             .simplify_rational_3()
-	    .flatten_comm(&Operator::Add)
-            .flatten_comm(&Operator::Mul)
+            .flatten()
             .explicit_exponents()
-            .explicit_coefficients()
             .collect_like_muls()
+            .flatten()
             .simplify_constants();
         if simplified.equal(&last_self) {
             simplified.order()
@@ -652,6 +652,33 @@ impl Expression {
                     ),
                 ],
             ),
+            Expression::Unary(Operator::Custom(f), x) if f == "sin" => Expression::Variadic(
+                Operator::Mul,
+                vec![
+                    x.clone().derive(wrt),
+                    Expression::Unary(Operator::Custom(String::from("cos")), x),
+                ],
+            ),
+            Expression::Unary(Operator::Custom(f), x) if f == "cos" => Expression::Variadic(
+                Operator::Mul,
+                vec![
+                    x.clone().derive(wrt),
+                    Expression::integer_expression(-1),
+                    Expression::Unary(Operator::Custom(String::from("sin")), x),
+                ],
+            ),
+            Expression::Unary(Operator::Custom(f), x) if f == "tan" => Expression::Binary(
+                Operator::Div,
+                Box::new(Expression::Unary(
+                    Operator::Custom(String::from("sin")),
+                    x.clone(),
+                )),
+                Box::new(Expression::Unary(
+                    Operator::Custom(String::from("cos")),
+                    x,
+                )),
+            )
+            .derive(wrt),
             Expression::Binary(Operator::Div, a, b) => {
                 let a_deriv = a.clone().derive(wrt);
                 let b_deriv = b.clone().derive(wrt);
@@ -688,13 +715,11 @@ impl Expression {
                     .derive(wrt),
                 ],
             ),
+            Expression::Variadic(_, mut exprs) if exprs.len() == 1 => exprs.remove(0).derive(wrt),
             Expression::Variadic(Operator::Add, exprs) => Expression::Variadic(
                 Operator::Add,
                 exprs.into_iter().map(|x| x.derive(wrt)).collect(),
             ),
-            Expression::Variadic(Operator::Mul, mut exprs) if exprs.len() == 1 => {
-                exprs.remove(0).derive(wrt)
-            }
             Expression::Variadic(Operator::Mul, exprs) => {
                 let mut exprs_deriv = exprs
                     .clone()
@@ -708,6 +733,7 @@ impl Expression {
                     node.remove(i);
                     node.insert(i, exprs_deriv.remove(0))
                 }
+
                 Expression::Variadic(
                     Operator::Add,
                     nodes
@@ -733,7 +759,7 @@ impl Expression {
             Expression::Binary(operator, left, right) => match operator {
                 Operator::Add => format!("{} + {}", left.into_tex(), right.into_tex()),
                 Operator::Sub => format!("{} - {}", left.into_tex(), right.into_tex()),
-                Operator::Div => format!("{} \\div {}", left.into_tex(), right.into_tex()),
+                Operator::Div => format!("\\frac{{{}}}{{{}}}", left.into_tex(), right.into_tex()),
                 Operator::Mul => format!("{} \\times {}", left.into_tex(), right.into_tex()),
                 Operator::Exp => format!("({}^{{{}}})", left.into_tex(), right.into_tex()),
                 _ => panic!("Impossible state reached"),
