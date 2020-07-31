@@ -1,10 +1,10 @@
 mod tests {
 
-    use crate::{Expression, Literal, Operator, Term};
+    use crate::expression::{Expression, Literal, Operator, Term};
     use quickcheck::{Arbitrary, Gen};
 
     use rand::prelude::*;
-    impl Arbitrary for crate::Literal {
+    impl Arbitrary for Literal {
         fn arbitrary<G: Gen>(g: &mut G) -> Self {
             match rand::random::<usize>() % 2 {
                 0 => Literal::Integer(i128::arbitrary(g)),

@@ -1,8 +1,5 @@
 use std::cmp::{Ordering, PartialEq, PartialOrd};
 use std::fmt;
-use std::fs;
-use std::io;
-use std::io::prelude::*;
 use std::ops::{Add, Mul};
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 pub enum Literal {
@@ -122,40 +119,42 @@ impl PartialEq for Expression {
 
 impl PartialOrd for Expression {
     fn partial_cmp(&self, other: &Expression) -> Option<Ordering> {
-	
         match (self, other) {
-            (Expression::Lit(a), Expression::Lit(b)) => {
-                a.partial_cmp(b)
-            }
+            (Expression::Lit(a), Expression::Lit(b)) => a.partial_cmp(b),
             (Expression::Lit(_), _) => Some(Ordering::Less),
             (_, Expression::Lit(_)) => Some(Ordering::Greater),
-            (Expression::Unary(op_a, a), Expression::Unary(op_b, b)) => {
-                Some(op_a.cmp(op_b).then(a.partial_cmp(b).unwrap_or(Ordering::Greater)))
-            }
+            (Expression::Unary(op_a, a), Expression::Unary(op_b, b)) => Some(
+                op_a.cmp(op_b)
+                    .then(a.partial_cmp(b).unwrap_or(Ordering::Greater)),
+            ),
             (Expression::Unary(_, _), _) => Some(Ordering::Less),
             (_, Expression::Unary(_, _)) => Some(Ordering::Greater),
-            (Expression::Binary(op_a, a_1, a_2), Expression::Binary(op_b, b_1, b_2)) => Some(op_a
-                .cmp(op_b)
-                .then(a_1.partial_cmp(b_1).unwrap_or(Ordering::Greater))
-                .then(a_2.partial_cmp(b_2).unwrap_or(Ordering::Greater))),
+            (Expression::Binary(op_a, a_1, a_2), Expression::Binary(op_b, b_1, b_2)) => Some(
+                op_a.cmp(op_b)
+                    .then(a_1.partial_cmp(b_1).unwrap_or(Ordering::Greater))
+                    .then(a_2.partial_cmp(b_2).unwrap_or(Ordering::Greater)),
+            ),
             (Expression::Binary(_, _, _), _) => Some(Ordering::Less),
             (_, Expression::Binary(_, _, _)) => Some(Ordering::Greater),
-            (Expression::Variadic(f, f_exprs), Expression::Variadic(g, g_exprs)) => Some(f.cmp(g).then(
-                f_exprs
-                    .iter()
-                    .zip(g_exprs.iter())
-                    .fold(Ordering::Equal, |acc, (a, b)| acc.then(a.partial_cmp(b).unwrap_or(Ordering::Less)))),
+            (Expression::Variadic(f, f_exprs), Expression::Variadic(g, g_exprs)) => Some(
+                f.cmp(g).then(
+                    f_exprs
+                        .iter()
+                        .zip(g_exprs.iter())
+                        .fold(Ordering::Equal, |acc, (a, b)| {
+                            acc.then(a.partial_cmp(b).unwrap_or(Ordering::Less))
+                        }),
+                ),
             ),
         }
     }
 }
 
-impl Eq for Expression {
-}
+impl Eq for Expression {}
 
 impl Ord for Expression {
-    fn cmp(&self,other: &Expression) -> Ordering {
-	self.partial_cmp(other).unwrap_or(Ordering::Less)
+    fn cmp(&self, other: &Expression) -> Ordering {
+        self.partial_cmp(other).unwrap_or(Ordering::Less)
     }
 }
 
@@ -467,11 +466,7 @@ impl Expression {
             Expression::Binary(Operator::Exp, mut base, mut pow) => {
                 *base = base.simplify_constants();
                 *pow = pow.simplify_constants();
-                if *pow == one_i
-                    || *base == one_i
-                    || *pow == one_r
-                    || *base == one_r
-                {
+                if *pow == one_i || *base == one_i || *pow == one_r || *base == one_r {
                     *base
                 } else if (*pow == zero_i || *pow == zero_r)
                     && !(*base == zero_i || *base == zero_r)
@@ -508,7 +503,7 @@ impl Expression {
                             Expression::Lit(Term::Numeric(lit)) => {
                                 Literal::apply(acc, lit, i128::mul, f64::mul)
                             }
-                            _ => panic!("Non constant!"),
+                            _ => acc,
                         },
                     ))));
                     if exprs.len() == 1 {
@@ -527,7 +522,7 @@ impl Expression {
                     .into_iter()
                     .map(Expression::simplify_constants)
                     .collect();
-                exprs.retain(|expr| !(*expr==zero_i || *expr==zero_r));
+                exprs.retain(|expr| !(*expr == zero_i || *expr == zero_r));
                 if exprs.is_empty() {
                     Expression::integer_expression(0)
                 } else if exprs
@@ -543,7 +538,7 @@ impl Expression {
                             Expression::Lit(Term::Numeric(lit)) => {
                                 Literal::apply(acc, lit, i128::add, f64::add)
                             }
-                            _ => panic!("Non constants!"),
+                            _ => acc,
                         },
                     ))));
                     if exprs.len() == 1 {
@@ -708,15 +703,15 @@ impl Expression {
             other => other,
         }
     }
-
+    //Quick and dirty way to get a string you can throw into a LaTeX renderer, can make visually inspecting results easier.
     pub fn into_tex(self) -> String {
         match self {
             Expression::Lit(literal) => literal.into_tex(),
             Expression::Unary(operator, operand) => match operator {
                 Operator::Paren => format!("({})", operand.into_tex()),
-                Operator::Neg => format!("-{}", operand.into_tex()),
+                Operator::Neg => format!("-({})", operand.into_tex()),
                 Operator::Custom(fun_name) => format!("{}({})", fun_name, operand.into_tex()),
-                _ => panic!("Impossible state reached"),
+                _ => "".to_string(),
             },
             Expression::Binary(operator, left, right) => match operator {
                 Operator::Add => format!("{} + {}", left.into_tex(), right.into_tex()),
@@ -724,7 +719,7 @@ impl Expression {
                 Operator::Div => format!("\\frac{{{}}}{{{}}}", left.into_tex(), right.into_tex()),
                 Operator::Mul => format!("{} \\times {}", left.into_tex(), right.into_tex()),
                 Operator::Exp => format!("({}^{{{}}})", left.into_tex(), right.into_tex()),
-                _ => panic!("Impossible state reached"),
+                _ => "".to_string(),
             },
             Expression::Variadic(operation, args) => {
                 let mut list = args
@@ -733,6 +728,7 @@ impl Expression {
                     .collect::<Vec<String>>();
                 let mut output = Vec::new();
                 if !list.is_empty() {
+                    output.push("(".to_string());
                     output.push(list.remove(0));
                 }
 
@@ -741,12 +737,13 @@ impl Expression {
                         match operation {
                             Operator::Add => " + ",
                             Operator::Mul => " \\times ",
-                            _ => "invalid",
+                            _ => "",
                         }
                         .to_string(),
                     );
                     output.push(list.remove(0));
                 }
+                output.push(")".to_string());
                 output.into_iter().collect()
             }
         }
