@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::cmp::{Ordering, PartialEq, PartialOrd};
 use std::fmt;
 use std::fs;
 use std::io;
@@ -92,12 +92,71 @@ impl fmt::Display for Operator {
     }
 }
 
-#[derive(Debug, Clone, PartialOrd, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Expression {
     Lit(Term),
     Unary(Operator, Box<Expression>),
     Binary(Operator, Box<Expression>, Box<Expression>),
     Variadic(Operator, Vec<Expression>),
+}
+
+impl PartialEq for Expression {
+    fn eq(&self, other: &Expression) -> bool {
+        match (self, other) {
+            (Expression::Lit(a), Expression::Lit(b)) => a == b,
+            (Expression::Unary(op_a, a_1), Expression::Unary(op_b, b_1)) => {
+                op_a == op_b && a_1.eq(b_1)
+            }
+            (Expression::Binary(op_a, a_1, a_2), Expression::Binary(op_b, b_1, b_2)) => {
+                op_a == op_b && a_1.eq(b_1) && a_2.eq(b_2)
+            }
+            (Expression::Variadic(op_a, exprs_a), Expression::Variadic(op_b, exprs_b)) => {
+                op_a == op_b
+                    && exprs_a.len() == exprs_b.len()
+                    && exprs_a.iter().zip(exprs_b.iter()).all(|(a, b)| a.eq(b))
+            }
+            _ => false,
+        }
+    }
+}
+
+impl PartialOrd for Expression {
+    fn partial_cmp(&self, other: &Expression) -> Option<Ordering> {
+	
+        match (self, other) {
+            (Expression::Lit(a), Expression::Lit(b)) => {
+                a.partial_cmp(b)
+            }
+            (Expression::Lit(_), _) => Some(Ordering::Less),
+            (_, Expression::Lit(_)) => Some(Ordering::Greater),
+            (Expression::Unary(op_a, a), Expression::Unary(op_b, b)) => {
+                Some(op_a.cmp(op_b).then(a.partial_cmp(b).unwrap_or(Ordering::Greater)))
+            }
+            (Expression::Unary(_, _), _) => Some(Ordering::Less),
+            (_, Expression::Unary(_, _)) => Some(Ordering::Greater),
+            (Expression::Binary(op_a, a_1, a_2), Expression::Binary(op_b, b_1, b_2)) => Some(op_a
+                .cmp(op_b)
+                .then(a_1.partial_cmp(b_1).unwrap_or(Ordering::Greater))
+                .then(a_2.partial_cmp(b_2).unwrap_or(Ordering::Greater))),
+            (Expression::Binary(_, _, _), _) => Some(Ordering::Less),
+            (_, Expression::Binary(_, _, _)) => Some(Ordering::Greater),
+            (Expression::Variadic(f, f_exprs), Expression::Variadic(g, g_exprs)) => Some(f.cmp(g).then(
+                f_exprs
+                    .iter()
+                    .zip(g_exprs.iter())
+                    .fold(Ordering::Equal, |acc, (a, b)| acc.then(a.partial_cmp(b).unwrap_or(Ordering::Less)))),
+            ),
+        }
+    }
+}
+
+impl Eq for Expression {
+}
+
+impl Ord for Expression {
+    fn cmp(&self,other: &Expression) -> Ordering {
+	self.partial_cmp(other).unwrap_or(Ordering::Less)
+    }
 }
 
 impl fmt::Display for Expression {
@@ -324,7 +383,7 @@ impl Expression {
         }
     }
 
-    //Makes all expressions under an addition node products. Makes it easier to group then (not implemented yet.)
+    //Makes all expressions under an addition node products. Makes it easier to group them (not implemented yet.)
     pub fn explicit_coefficients(self) -> Expression {
         match self {
             Expression::Variadic(Operator::Add, exprs) => {
@@ -349,6 +408,7 @@ impl Expression {
         }
     }
 
+    //Groups exponents with the same base
     pub fn collect_like_muls(self) -> Expression {
         match self {
             Expression::Variadic(Operator::Mul, mut exprs) => {
@@ -369,7 +429,7 @@ impl Expression {
                 while !exprs.is_empty() {
                     if let Expression::Binary(Operator::Exp, base, mut pow) = exprs.remove(0) {
                         for term in &mut terms {
-                            if term.0.equal(&base) {
+                            if term.0 == *base {
                                 term.1.push(std::mem::replace(
                                     &mut *pow,
                                     Expression::integer_expression(0),
@@ -407,18 +467,18 @@ impl Expression {
             Expression::Binary(Operator::Exp, mut base, mut pow) => {
                 *base = base.simplify_constants();
                 *pow = pow.simplify_constants();
-                if pow.equal(&one_i)
-                    || base.equal(&one_i)
-                    || pow.equal(&one_r)
-                    || base.equal(&one_r)
+                if *pow == one_i
+                    || *base == one_i
+                    || *pow == one_r
+                    || *base == one_r
                 {
                     *base
-                } else if (pow.equal(&zero_i) || pow.equal(&zero_r))
-                    && (!base.equal(&zero_i) || !base.equal(&zero_r))
+                } else if (*pow == zero_i || *pow == zero_r)
+                    && !(*base == zero_i || *base == zero_r)
                 {
                     one_i
-                } else if (base.equal(&zero_i) || base.equal(&zero_r))
-                    && (!pow.equal(&zero_i) || !pow.equal(&zero_r))
+                } else if (*base == zero_i || *base == zero_r)
+                    && !(*pow == zero_i || *pow == zero_r)
                 {
                     zero_i
                 } else {
@@ -430,10 +490,10 @@ impl Expression {
                     .into_iter()
                     .map(Expression::simplify_constants)
                     .collect();
-                exprs.retain(|expr| !(expr.equal(&one_i) || expr.equal(&one_r)));
+                exprs.retain(|expr| !(*expr == one_i || *expr == one_r));
                 if exprs.is_empty() {
                     Expression::integer_expression(1)
-                } else if exprs.iter().any(|x| x.equal(&zero_i) || x.equal(&zero_r)) {
+                } else if exprs.iter().any(|x| *x == zero_i || *x == zero_r) {
                     zero_i
                 } else if exprs
                     .iter()
@@ -467,7 +527,7 @@ impl Expression {
                     .into_iter()
                     .map(Expression::simplify_constants)
                     .collect();
-                exprs.retain(|expr| !(expr.equal(&zero_i) || expr.equal(&zero_r)));
+                exprs.retain(|expr| !(*expr==zero_i || *expr==zero_r));
                 if exprs.is_empty() {
                     Expression::integer_expression(0)
                 } else if exprs
@@ -501,59 +561,14 @@ impl Expression {
         }
     }
 
-    pub fn comparer(&self, b: &Expression) -> std::cmp::Ordering {
-        match (self, b) {
-            (Expression::Lit(a), Expression::Lit(b)) => {
-                a.partial_cmp(b).expect("Failed to compare two literals!")
-            }
-            (Expression::Lit(_), _) => Ordering::Less,
-            (_, Expression::Lit(_)) => Ordering::Greater,
-            (Expression::Unary(op_a, a), Expression::Unary(op_b, b)) => {
-                op_a.cmp(op_b).then(Expression::comparer(a, b))
-            }
-            (Expression::Unary(_, _), _) => std::cmp::Ordering::Less,
-            (_, Expression::Unary(_, _)) => std::cmp::Ordering::Greater,
-            (Expression::Binary(op_a, a_1, a_2), Expression::Binary(op_b, b_1, b_2)) => op_a
-                .cmp(op_b)
-                .then(Expression::comparer(a_1, b_1))
-                .then(Expression::comparer(a_2, b_2)),
-            (Expression::Binary(_, _, _), _) => std::cmp::Ordering::Less,
-            (_, Expression::Binary(_, _, _)) => std::cmp::Ordering::Greater,
-            (Expression::Variadic(f, f_exprs), Expression::Variadic(g, g_exprs)) => f.cmp(g).then(
-                f_exprs
-                    .iter()
-                    .zip(g_exprs.iter())
-                    .fold(Ordering::Equal, |acc, (a, b)| acc.then(a.comparer(b))),
-            ),
-        }
-    }
-
     pub fn order(self) -> Expression {
         match self {
             Expression::Variadic(op, mut exprs) => {
                 exprs = exprs.into_iter().map(|x| x.order()).collect();
-                exprs.sort_by(Expression::comparer);
+                exprs.sort();
                 Expression::Variadic(op, exprs)
             }
             other => other.apply_on_others(Expression::order),
-        }
-    }
-
-    pub fn equal(&self, other: &Expression) -> bool {
-        match (self, other) {
-            (Expression::Lit(a), Expression::Lit(b)) => a == b,
-            (Expression::Unary(op_a, a_1), Expression::Unary(op_b, b_1)) => {
-                op_a == op_b && a_1.equal(b_1)
-            }
-            (Expression::Binary(op_a, a_1, a_2), Expression::Binary(op_b, b_1, b_2)) => {
-                op_a == op_b && a_1.equal(b_1) && a_2.equal(b_2)
-            }
-            (Expression::Variadic(op_a, exprs_a), Expression::Variadic(op_b, exprs_b)) => {
-                op_a == op_b
-                    && exprs_a.len() == exprs_b.len()
-                    && exprs_a.iter().zip(exprs_b.iter()).all(|(a, b)| a.equal(b))
-            }
-            _ => false,
         }
     }
 
@@ -572,13 +587,14 @@ impl Expression {
             .collect_like_muls()
             .flatten()
             .simplify_constants();
-        if simplified.equal(&last_self) {
+        if simplified == last_self {
             simplified.order()
         } else {
             simplified.simplify()
         }
     }
 
+    //The reason all this other code exists. Recursively produces the derivate of a given expression with respect to its supplied argument
     pub fn derive(self, wrt: char) -> Expression {
         match self {
             Expression::Lit(Term::Variable(var)) => {
