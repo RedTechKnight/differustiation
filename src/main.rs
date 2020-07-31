@@ -15,7 +15,7 @@ use std::fs;
 use std::io;
 use std::io::prelude::*;
 fn main() {
-    let mut input = "tan(x^2)";
+    let mut input = "x^5";
     let expr = parse_expression(input).unwrap();
     let one = Expression::integer_expression(1);
     let zero = Expression::integer_expression(0);

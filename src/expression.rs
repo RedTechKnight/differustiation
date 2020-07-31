@@ -1,5 +1,5 @@
-use std::fmt;
 use std::cmp::Ordering;
+use std::fmt;
 use std::fs;
 use std::io;
 use std::io::prelude::*;
@@ -39,7 +39,6 @@ impl Literal {
         }
     }
 }
-
 
 #[derive(Debug, Clone, Copy, PartialOrd, PartialEq)]
 pub enum Term {
@@ -132,16 +131,16 @@ impl Expression {
     pub fn integer_expression(a: i128) -> Expression {
         Expression::Lit(Term::Numeric(Literal::Integer(a)))
     }
-    
-    pub fn recurse<F: Fn(Expression) -> Expression>(self, rec: F) -> Expression {
+    //Applies function on the remaining cases of an Expression, meant to help cut down on boilerplate.
+    pub fn apply_on_others<F: Fn(Expression) -> Expression>(self, f: F) -> Expression {
         match self {
             l @ Expression::Lit(_) => l,
-            Expression::Unary(f, a) => Expression::Unary(f, Box::new(rec(*a))),
-            Expression::Binary(f, a, b) => {
-                Expression::Binary(f, Box::new(rec(*a)), Box::new(rec(*b)))
+            Expression::Unary(op, a) => Expression::Unary(op, Box::new(f(*a))),
+            Expression::Binary(op, a, b) => {
+                Expression::Binary(op, Box::new(f(*a)), Box::new(f(*b)))
             }
-            Expression::Variadic(f, exprs) => {
-                Expression::Variadic(f, exprs.into_iter().map(rec).collect())
+            Expression::Variadic(op, exprs) => {
+                Expression::Variadic(op, exprs.into_iter().map(f).collect())
             }
         }
     }
@@ -149,7 +148,7 @@ impl Expression {
     pub fn strip_paren(self) -> Expression {
         match self {
             Expression::Unary(Operator::Paren, op) => op.strip_paren(),
-            other => other.recurse(Expression::strip_paren),
+            other => other.apply_on_others(Expression::strip_paren),
         }
     }
 
@@ -159,7 +158,7 @@ impl Expression {
                 Operator::Mul,
                 vec![Expression::integer_expression(-1), a.factor_out_neg()],
             ),
-            other => other.recurse(Expression::factor_out_neg),
+            other => other.apply_on_others(Expression::factor_out_neg),
         }
     }
 
@@ -175,7 +174,7 @@ impl Expression {
                     ),
                 ],
             ),
-            other => other.recurse(Expression::factor_out_sub),
+            other => other.apply_on_others(Expression::factor_out_sub),
         }
     }
 
@@ -184,6 +183,7 @@ impl Expression {
             .flatten_comm(&Operator::Mul)
     }
 
+    //Flattens trees of commutative operations (i.e., addition and multiplicaton)
     pub fn flatten_comm(self, operator: &Operator) -> Expression {
         match self {
             Expression::Binary(op, a, b) if operator == &op => {
@@ -217,10 +217,11 @@ impl Expression {
                 }
                 Expression::Variadic(operator.clone(), rest)
             }
-            other => other.recurse(|x| x.flatten_comm(operator)),
+            other => other.apply_on_others(|x| x.flatten_comm(operator)),
         }
     }
 
+    //Turns (/ (/ a b) c) into (/ a (* b c))
     pub fn simplify_rational_1(self) -> Expression {
         match self {
             Expression::Binary(Operator::Div, numer, denom) => match numer.simplify_rational_1() {
@@ -239,10 +240,10 @@ impl Expression {
                     Box::new(denom.simplify_rational_1()),
                 ),
             },
-            other => other.recurse(Expression::simplify_rational_1),
+            other => other.apply_on_others(Expression::simplify_rational_1),
         }
     }
-
+    //Turns (/ a (/ b c)) into (/ (* a c) b)
     pub fn simplify_rational_2(self) -> Expression {
         match self {
             Expression::Binary(Operator::Div, numer, denom) => match denom.simplify_rational_2() {
@@ -261,13 +262,17 @@ impl Expression {
                     Box::new(denom),
                 ),
             },
-            other => other.recurse(Expression::simplify_rational_2),
+            other => other.apply_on_others(Expression::simplify_rational_2),
         }
     }
-
+    //Turns (* a b (/ c d) e f (/ g h) i j...) into (/ (* a b c e f (/g h) i j ...) d) until (/ (* a b c e f g i j) (* d h)) remains
     pub fn simplify_rational_3(self) -> Expression {
         match self {
             Expression::Variadic(Operator::Mul, mut exprs) => {
+                exprs = exprs
+                    .into_iter()
+                    .map(Expression::simplify_rational_3)
+                    .collect();
                 match exprs
                     .iter_mut()
                     .position(|x| matches!(*x, Expression::Binary(Operator::Div, _, _)))
@@ -278,33 +283,23 @@ impl Expression {
                             exprs.push(*numer);
                             Expression::Binary(
                                 Operator::Div,
-                                Box::new(Expression::Variadic(
-                                    Operator::Mul,
-                                    exprs
-                                        .into_iter()
-                                        .map(Expression::simplify_rational_3)
-                                        .collect(),
-                                )),
+                                Box::new(Expression::Variadic(Operator::Mul, exprs)),
                                 Box::new(denom.simplify_rational_3()),
                             )
                             .simplify_rational_3()
                         } else {
-                            panic!("Unreachable!")
+                            //It *should* be impossible to reach this case.
+                            panic!("In simplify_rational_3, unsure how you got here.")
                         }
                     }
-                    None => Expression::Variadic(
-                        Operator::Mul,
-                        exprs
-                            .into_iter()
-                            .map(Expression::simplify_rational_3)
-                            .collect(),
-                    ),
+                    None => Expression::Variadic(Operator::Mul, exprs),
                 }
             }
-            other => other.recurse(Expression::simplify_rational_3),
+            other => other.apply_on_others(Expression::simplify_rational_3),
         }
     }
 
+    //Makes all expressions under multiplication node exponentials. Makes it easier to group them.
     pub fn explicit_exponents(self) -> Expression {
         match self {
             Expression::Variadic(Operator::Mul, exprs) => {
@@ -325,10 +320,11 @@ impl Expression {
                     .collect();
                 Expression::Variadic(Operator::Mul, exprs)
             }
-            other => other.recurse(Expression::explicit_exponents),
+            other => other.apply_on_others(Expression::explicit_exponents),
         }
     }
 
+    //Makes all expressions under an addition node products. Makes it easier to group then (not implemented yet.)
     pub fn explicit_coefficients(self) -> Expression {
         match self {
             Expression::Variadic(Operator::Add, exprs) => {
@@ -349,7 +345,7 @@ impl Expression {
                     .collect();
                 Expression::Variadic(Operator::Add, exprs)
             }
-            other => other.recurse(Expression::explicit_coefficients),
+            other => other.apply_on_others(Expression::explicit_coefficients),
         }
     }
 
@@ -398,7 +394,7 @@ impl Expression {
                     .collect();
                 Expression::Variadic(Operator::Mul, exprs)
             }
-            other => other.recurse(Expression::collect_like_muls),
+            other => other.apply_on_others(Expression::collect_like_muls),
         }
     }
 
@@ -501,14 +497,7 @@ impl Expression {
                     Expression::Variadic(Operator::Add, exprs)
                 }
             }
-            other => other.recurse(Expression::simplify_constants),
-        }
-    }
-
-    pub fn factor(self) -> Expression {
-        match self {
-            Expression::Binary(Operator::Div, num, denom) => panic!(),
-            other => other.recurse(Expression::factor),
+            other => other.apply_on_others(Expression::simplify_constants),
         }
     }
 
@@ -546,7 +535,7 @@ impl Expression {
                 exprs.sort_by(Expression::comparer);
                 Expression::Variadic(op, exprs)
             }
-            other => other.recurse(Expression::order),
+            other => other.apply_on_others(Expression::order),
         }
     }
 
@@ -633,10 +622,7 @@ impl Expression {
                     Operator::Custom(String::from("sin")),
                     x.clone(),
                 )),
-                Box::new(Expression::Unary(
-                    Operator::Custom(String::from("cos")),
-                    x,
-                )),
+                Box::new(Expression::Unary(Operator::Custom(String::from("cos")), x)),
             )
             .derive(wrt),
             Expression::Binary(Operator::Div, a, b) => {
