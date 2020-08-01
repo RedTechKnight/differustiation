@@ -1,6 +1,6 @@
 # Differustiation
 
-A simple program that differentiates mathematical expressions. Still very incomplete (and may not produce correct results).
+A simple program that differentiates mathematical expressions. Still very incomplete (and may not produce correct results). Based on the methods outlined [here](http://www.math.wpi.edu/IQP/BVCalcHist/calc5.html)
 
 ## Usage
 Basic example
