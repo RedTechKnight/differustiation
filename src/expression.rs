@@ -164,14 +164,15 @@ impl fmt::Display for Expression {
             Expression::Lit(t) => write!(f, "{}", t),
             Expression::Unary(op, a) => match op {
                 Operator::Paren => write!(f, "({})", *a),
-		Operator::Custom(fun) => write!(f,"{}({})",fun,*a),
+                Operator::Custom(fun) => write!(f, "{}({})", fun, *a),
                 op => write!(f, "{}{}", op, *a),
             },
             Expression::Binary(op, a, b) => write!(f, "({} {} {})", *a, op, *b),
             Expression::Variadic(op, exprs) => {
                 write!(f, "(")?;
+		
                 for expr in exprs.iter().take(exprs.len() - 1) {
-                    write!(f, "{} {}", expr, op)?;
+                    write!(f, " {} {}", expr, op)?;
                 }
                 match exprs.iter().last() {
                     Some(expr) => write!(f, " {}", expr),
@@ -397,15 +398,19 @@ impl Expression {
                 let exprs = exprs
                     .into_iter()
                     .map(|expr| match expr {
-                        Expression::Binary(Operator::Mul, lhs, rhs) => Expression::Binary(
+                        Expression::Variadic(Operator::Mul, exprs) => Expression::Variadic(
                             Operator::Mul,
-                            Box::new(lhs.explicit_coefficients()),
-                            Box::new(rhs.explicit_coefficients()),
+                            exprs
+                                .into_iter()
+                                .map(Expression::explicit_coefficients)
+                                .collect(),
                         ),
-                        other => Expression::Binary(
+                        other => Expression::Variadic(
                             Operator::Mul,
-                            Box::new(Expression::integer_expression(1)),
-                            Box::new(other.explicit_coefficients()),
+                            vec![
+                                Expression::integer_expression(1),
+                                other.explicit_coefficients(),
+                            ],
                         ),
                     })
                     .collect();
@@ -462,6 +467,68 @@ impl Expression {
                 Expression::Variadic(Operator::Mul, exprs)
             }
             other => other.apply_on_others(Expression::collect_like_muls),
+        }
+    }
+
+    pub fn collect_like_adds(self) -> Expression {
+        match self {
+            Expression::Variadic(Operator::Add, mut exprs) => {
+                exprs = exprs
+                    .into_iter()
+                    .map(Expression::collect_like_adds)
+                    .collect();
+                let mut new_exprs: Vec<Expression> = Vec::new();
+                let mut non_numeric =
+                    |expr: &Expression| !matches!(expr, Expression::Lit(Term::Numeric(_)));
+                while !exprs.is_empty() {
+                    let next = exprs.remove(0);
+                    match new_exprs.iter().position(|expr| {
+                        if let (
+                            Expression::Variadic(Operator::Mul, exprs_a),
+                            Expression::Variadic(Operator::Mul, exprs_b),
+                        ) = (&next, expr)
+                        {
+                            exprs_a
+                                .iter()
+                                .filter(|x| non_numeric(x))
+                                .zip(exprs_b.iter().filter(|x| non_numeric(x)))
+                                .all(|(a, b)| a == b)
+                        } else {
+                            false
+                        }
+                    }) {
+                        Some(index) => {
+                            if let Some(mut expr) = new_exprs.get_mut(index) {
+                                match expr {
+                                    Expression::Variadic(Operator::Mul, exprs) => {
+                                        match exprs.iter().position(|expr| {
+                                            matches!(expr, Expression::Lit(Term::Numeric(_)))
+                                        }) {
+                                            Some(index) => {
+                                                if let Some(Expression::Lit(Term::Numeric(t))) =
+                                                    exprs.get_mut(index)
+                                                {
+                                                    *t = Literal::apply(
+                                                        *t,
+                                                        Literal::Integer(1),
+                                                        i128::add,
+                                                        f64::add,
+                                                    );
+                                                }
+                                            }
+                                            None => exprs.push(Expression::integer_expression(2)),
+                                        }
+                                    }
+                                    _ => (),
+                                }
+                            }
+                        }
+                        None => new_exprs.push(next),
+                    }
+                }
+                Expression::Variadic(Operator::Add, new_exprs)
+            }
+            other => other.apply_on_others(Expression::collect_like_adds),
         }
     }
 
@@ -589,6 +656,9 @@ impl Expression {
             .explicit_exponents()
             .collect_like_muls()
             .flatten()
+	    .explicit_coefficients()
+	    .collect_like_adds()
+	    .flatten()
             .simplify_constants();
         if simplified == last_self {
             simplified.order()
