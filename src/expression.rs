@@ -323,6 +323,7 @@ impl Expression {
             other => other.apply_on_others(Expression::simplify_rational_2),
         }
     }
+    
     //Turns (* a b (/ c d) e f (/ g h) i j...) into (/ (* a b c e f (/g h) i j ...) d) until (/ (* a b c e f g i j) (* d h)) remains
     pub fn simplify_rational_3(self) -> Expression {
         match self {
@@ -346,8 +347,8 @@ impl Expression {
                             )
                             .simplify_rational_3()
                         } else {
-                            //It *should* be impossible to reach this case.
-                            panic!("In simplify_rational_3, unsure how you got here.")
+                            //This shouldn't be possible to reach
+                            Expression::Variadic(Operator::Mul, exprs)
                         }
                     }
                     None => Expression::Variadic(Operator::Mul, exprs),

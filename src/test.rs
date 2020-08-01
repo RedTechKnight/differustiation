@@ -2,6 +2,7 @@ mod tests {
 
     use crate::expression::{Expression, Literal, Operator, Term};
     use quickcheck::{Arbitrary, Gen};
+    use std::collections::HashMap;
 
     use rand::prelude::*;
     impl Arbitrary for Literal {
@@ -219,5 +220,33 @@ mod tests {
     #[quickcheck]
     fn are_all_exponents_in_mul(expr: Expression) -> bool {
 	all_exponents_in_mul(expr.strip_paren().flatten_comm(&Operator::Mul).explicit_exponents())
+    }
+
+    fn no_repeating_bases(expr: Expression) -> bool {
+	all_exponents_in_mul(expr.clone()) && match expr {
+	    Expression::Variadic(Operator::Mul,exprs) if exprs.len() == 1 => exprs.into_iter().all(no_repeating_bases),
+	    Expression::Variadic(Operator::Mul,exprs) => {
+		let mut bases = Vec::new();
+		for expr in &exprs {
+		    if let Expression::Binary(Operator::Exp,base,_) = expr {
+			if bases.contains(&base) {
+			    return false
+			} else {
+			    bases.push(base)
+			}
+		    }
+		}
+		true && exprs.into_iter().all(no_repeating_bases)
+	    }
+	    Expression::Unary(_,expr) => no_repeating_bases(*expr),
+	    Expression::Binary(_,lhs,rhs) => no_repeating_bases(*lhs) && no_repeating_bases(*rhs),
+	    Expression::Variadic(_,exprs) => exprs.into_iter().all(no_repeating_bases),
+	    _ => true
+	}
+    }
+
+    #[quickcheck]
+    fn no_repeated_bases(expr: Expression) -> bool {
+	no_repeating_bases(expr.strip_paren().flatten().explicit_exponents().collect_like_muls())
     }
 }
