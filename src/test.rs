@@ -2,9 +2,7 @@ mod tests {
 
     use crate::expression::{Expression, Literal, Operator, Term};
     use quickcheck::{Arbitrary, Gen};
-    use std::collections::HashMap;
-
-    use rand::prelude::*;
+    
     impl Arbitrary for Literal {
         fn arbitrary<G: Gen>(g: &mut G) -> Self {
             match rand::random::<usize>() % 2 {
@@ -49,6 +47,7 @@ mod tests {
             }
         }
     }
+    
     fn no_neg_expr(expr: Expression) -> bool {
         match expr {
             Expression::Unary(Operator::Neg, _) => false,
@@ -60,8 +59,7 @@ mod tests {
     }
     #[quickcheck]
     fn negs_factored_out(expr: Expression) -> bool {
-        let new_expr = expr.factor_out_neg();
-        no_neg_expr(new_expr)
+        no_neg_expr(expr)
     }
 
     fn no_sub_expr(expr: Expression) -> bool {
@@ -169,8 +167,7 @@ mod tests {
         }
     }
 
-    fn no_divs_in_muls(mut expr: Expression) -> bool {
-        let mut last = expr.clone();
+    fn no_divs_in_muls(expr: Expression) -> bool {
         match expr {
             Expression::Binary(Operator::Mul, a, b) => {
                 !(matches!(*a, Expression::Binary(Operator::Div, _, _))

@@ -1,7 +1,4 @@
 target/
 *~
-plan.org
-Cargo.lock
 .vscode/
-debug*
-*.sh
+misc/

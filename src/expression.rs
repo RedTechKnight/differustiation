@@ -77,8 +77,8 @@ pub enum Operator {
 impl fmt::Display for Operator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Operator::Paren => write!(f, "p"),
-            Operator::Neg => write!(f, "n"),
+            Operator::Paren => write!(f, ""),
+            Operator::Neg => write!(f, "-"),
             Operator::Add => write!(f, "+"),
             Operator::Mul => write!(f, "*"),
             Operator::Sub => write!(f, "-"),
@@ -162,21 +162,28 @@ impl fmt::Display for Expression {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Expression::Lit(t) => write!(f, "{}", t),
-            Expression::Unary(op, a) => write!(f, "({} {})", op, *a),
-            Expression::Binary(op, a, b) => write!(f, "({} {} {})", op, *a, *b),
-            Expression::Variadic(op, exprs) => write!(
-                f,
-                "({} {})",
-                op,
-                exprs
-                    .iter()
-                    .map(|x| x.to_string() + " ")
-                    .collect::<String>()
-            ),
+            Expression::Unary(op, a) => match op {
+                Operator::Paren => write!(f, "({})", *a),
+		Operator::Custom(fun) => write!(f,"{}({})",fun,*a),
+                op => write!(f, "{}{}", op, *a),
+            },
+            Expression::Binary(op, a, b) => write!(f, "({} {} {})", *a, op, *b),
+            Expression::Variadic(op, exprs) => {
+                write!(f, "(")?;
+                for expr in exprs.iter().take(exprs.len() - 1) {
+                    write!(f, "{} {}", expr, op)?;
+                }
+                match exprs.iter().last() {
+                    Some(expr) => write!(f, " {}", expr),
+                    _ => write!(f, ""),
+                }?;
+                write!(f, ")")
+            }
         }
     }
 }
 
+//The methods are mostly different steps of the simplification process
 impl Expression {
     pub fn variable_expression(a: char) -> Expression {
         Expression::Lit(Term::Variable(a))
@@ -323,7 +330,7 @@ impl Expression {
             other => other.apply_on_others(Expression::simplify_rational_2),
         }
     }
-    
+
     //Turns (* a b (/ c d) e f (/ g h) i j...) into (/ (* a b c e f (/g h) i j ...) d) until (/ (* a b c e f g i j) (* d h)) remains
     pub fn simplify_rational_3(self) -> Expression {
         match self {
