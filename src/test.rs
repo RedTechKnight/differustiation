@@ -2,7 +2,7 @@ mod tests {
 
     use crate::expression::{Expression, Literal, Operator, Term};
     use quickcheck::{Arbitrary, Gen};
-    
+
     impl Arbitrary for Literal {
         fn arbitrary<G: Gen>(g: &mut G) -> Self {
             match rand::random::<usize>() % 2 {
@@ -16,37 +16,44 @@ mod tests {
         fn arbitrary<G: Gen>(g: &mut G) -> Self {
             match rand::random::<usize>() % 2 {
                 0 => Term::Numeric(Literal::arbitrary(g)),
-                _ => Term::Variable('x'),
+                _ => Term::Variable(char::arbitrary(g)),
             }
         }
     }
+    fn sized_gen<G: Gen>(g: &mut G, max_depth: i32) -> Expression {
+        if max_depth <= 0 {
+            return Expression::Lit(Term::arbitrary(g));
+        }
+        match rand::random::<usize>() % 3 {
+            0 => Expression::Binary(
+                match rand::random::<usize>() % 5 {
+                    0 => Operator::Add,
+                    1 => Operator::Mul,
+                    2 => Operator::Div,
+                    3 => Operator::Sub,
+                    _ => Operator::Exp,
+                },
+                Box::new(sized_gen(g, max_depth - 1)),
+                Box::new(sized_gen(g, max_depth - 1)),
+            ),
 
+            1 => Expression::Unary(
+                match rand::random::<usize>() % 2 {
+                    0 => Operator::Paren,
+                    _ => Operator::Neg,
+                },
+                Box::new(sized_gen(g, max_depth - 1)),
+            ),
+            _ => Expression::Lit(Term::arbitrary(g)),
+        }
+    }
     impl Arbitrary for Expression {
         fn arbitrary<G: Gen>(g: &mut G) -> Self {
-            match rand::random::<usize>() % 3 {
-                0 => Expression::Binary(
-                    match rand::random::<usize>() % 5 {
-                        0 => Operator::Add,
-                        1 => Operator::Mul,
-                        2 => Operator::Div,
-                        3 => Operator::Sub,
-                        _ => Operator::Exp,
-                    },
-                    Box::new(Expression::arbitrary(g)),
-                    Box::new(Expression::arbitrary(g)),
-                ),
-
-                1 => Expression::Unary(
-                    match rand::random::<usize>() % 2 {
-                        0 => Operator::Paren,
-                        _ => Operator::Neg,
-                    },
-                    Box::new(Expression::arbitrary(g)),
-                ),
-                _ => Expression::Lit(Term::arbitrary(g)),
-            }
+            sized_gen(g, 200)
         }
     }
+
+    //These all test if the various expression simplification functions work as intended basically.
     
     fn no_neg_expr(expr: Expression) -> bool {
         match expr {
@@ -58,8 +65,8 @@ mod tests {
         }
     }
     #[quickcheck]
-    fn negs_factored_out(expr: Expression) -> bool {
-        no_neg_expr(expr)
+    fn negation_expressions_factored_out(expr: Expression) -> bool {
+        no_neg_expr(expr.strip_paren().factor_out_neg())
     }
 
     fn no_sub_expr(expr: Expression) -> bool {
@@ -71,101 +78,81 @@ mod tests {
             _ => true,
         }
     }
-
     #[quickcheck]
-    fn subs_factored_out(expr: Expression) -> bool {
-        no_sub_expr(expr.factor_out_sub())
+    fn subtraction_expressions_factored_out(expr: Expression) -> bool {
+        no_sub_expr(expr.strip_paren().factor_out_sub())
     }
-
-    fn add_trees_flattened(expr: Expression) -> bool {
+    
+    fn comm_trees_flattened(expr: Expression,operator: &Operator) -> bool {
         match expr {
-            Expression::Binary(Operator::Add, _, _) => false,
-            Expression::Variadic(Operator::Add, exprs) => {
+            Expression::Binary(op, _, _) if &op == operator => false,
+            Expression::Variadic(op, exprs) if &op == operator => {
                 !exprs.iter().any(|expr| {
                     matches!(
                         expr,
-                        Expression::Binary(Operator::Add, _, _) |
-                        Expression::Variadic(Operator::Add, _)
+                        Expression::Binary(op, _, _)|
+                        Expression::Variadic(op, _) if op == operator
                     )
-                }) && exprs.into_iter().all(add_trees_flattened)
+                }) && exprs.into_iter().all(|expr| comm_trees_flattened(expr,operator))
             }
-            Expression::Variadic(_, exprs) => exprs.into_iter().all(add_trees_flattened),
+            Expression::Variadic(_, exprs) => exprs.into_iter().all(|expr| comm_trees_flattened(expr,operator)),
             Expression::Binary(_, lhs, rhs) => {
-                add_trees_flattened(*lhs) && add_trees_flattened(*rhs)
+                comm_trees_flattened(*lhs,operator) && comm_trees_flattened(*rhs,operator)
             }
-            Expression::Unary(_, expr) => add_trees_flattened(*expr),
+            Expression::Unary(_, expr) => comm_trees_flattened(*expr,operator),
             _ => true,
         }
     }
 
     #[quickcheck]
-    fn add_trees_flatten(expr: Expression) -> bool {
-        add_trees_flattened(expr.strip_paren().flatten_comm(&Operator::Add))
-    }
-
-    fn mul_trees_flattened(expr: Expression) -> bool {
-        match expr {
-            Expression::Binary(Operator::Mul, _, _) => false,
-            Expression::Variadic(Operator::Mul, exprs) => {
-                !exprs.iter().any(|expr| {
-                    matches!(
-                        expr,
-                        Expression::Binary(Operator::Mul, _, _) |
-                        Expression::Variadic(Operator::Mul, _)
-                    )
-                }) && exprs.into_iter().all(mul_trees_flattened)
-            }
-            Expression::Variadic(_, exprs) => exprs.into_iter().all(mul_trees_flattened),
-            Expression::Binary(_, lhs, rhs) => {
-                mul_trees_flattened(*lhs) && mul_trees_flattened(*rhs)
-            }
-            Expression::Unary(_, expr) => mul_trees_flattened(*expr),
-            _ => true,
-        }
+    fn addition_operations_flattened(expr: Expression) -> bool {
+        comm_trees_flattened(expr.strip_paren().flatten_comm(&Operator::Add),&Operator::Add)
     }
 
     #[quickcheck]
-    fn mul_trees_flatten(expr: Expression) -> bool {
-        mul_trees_flattened(expr.strip_paren().flatten_comm(&Operator::Mul))
+    fn multiplication_operations_flattened(expr: Expression) -> bool {
+        comm_trees_flattened(expr.strip_paren().flatten_comm(&Operator::Mul),&Operator::Mul)
     }
 
-    fn no_nested_divs_1(expr: Expression) -> bool {
+    fn no_divs_in_numer(expr: Expression) -> bool {
         match expr {
             Expression::Binary(Operator::Div, a, _)
                 if matches!(*a, Expression::Binary(Operator::Div, _, _)) =>
             {
                 false
             }
-            Expression::Unary(_, expr) => no_nested_divs_1(*expr),
-            Expression::Binary(_, lhs, rhs) => no_nested_divs_1(*lhs) && no_nested_divs_1(*rhs),
-            Expression::Variadic(_, exprs) => exprs.into_iter().all(no_nested_divs_1),
+            Expression::Unary(_, expr) => no_divs_in_numer(*expr),
+            Expression::Binary(_, lhs, rhs) => no_divs_in_numer(*lhs) && no_divs_in_numer(*rhs),
+            Expression::Variadic(_, exprs) => exprs.into_iter().all(no_divs_in_numer),
             _ => true,
         }
     }
 
     #[quickcheck]
-    fn no_nested_1(expr: Expression) -> bool {
-        no_nested_divs_1(expr.strip_paren().simplify_rational_1())
+    fn no_numerators_are_div_expressions(expr: Expression) -> bool {
+        no_divs_in_numer(expr.strip_paren().remove_div_in_numer())
     }
 
-    #[quickcheck]
-    fn no_nested_2(expr: Expression) -> bool {
-        no_nested_divs_2(expr.strip_paren().simplify_rational_2())
-    }
-
-    fn no_nested_divs_2(expr: Expression) -> bool {
+    fn no_divs_in_denom(expr: Expression) -> bool {
         match expr {
             Expression::Binary(Operator::Div, _, b)
                 if matches!(*b, Expression::Binary(Operator::Div, _, _)) =>
             {
                 false
             }
-            Expression::Unary(_, expr) => no_nested_divs_2(*expr),
-            Expression::Binary(_, lhs, rhs) => no_nested_divs_2(*lhs) && no_nested_divs_2(*rhs),
-            Expression::Variadic(_, exprs) => exprs.into_iter().all(no_nested_divs_2),
+            Expression::Unary(_, expr) => no_divs_in_denom(*expr),
+            Expression::Binary(_, lhs, rhs) => no_divs_in_denom(*lhs) && no_divs_in_denom(*rhs),
+            Expression::Variadic(_, exprs) => exprs.into_iter().all(no_divs_in_denom),
             _ => true,
         }
     }
+    
+    #[quickcheck]
+    fn no_denominators_are_div_expressions(expr: Expression) -> bool {
+        no_divs_in_denom(expr.strip_paren().remove_div_in_denom())
+    }
+
+    
 
     fn no_divs_in_muls(expr: Expression) -> bool {
         match expr {
@@ -189,11 +176,11 @@ mod tests {
     }
 
     #[quickcheck]
-    fn no_nested_3(expr: Expression) -> bool {
+    fn no_div_expressions_in_mul_expressions(expr: Expression) -> bool {
         no_divs_in_muls(
             expr.strip_paren()
                 .flatten_comm(&Operator::Mul)
-                .simplify_rational_3(),
+                .remove_div_in_mul_node(),
         )
     }
 
@@ -215,35 +202,62 @@ mod tests {
     }
 
     #[quickcheck]
-    fn are_all_exponents_in_mul(expr: Expression) -> bool {
-	all_exponents_in_mul(expr.strip_paren().flatten_comm(&Operator::Mul).explicit_exponents())
+    fn all_expressions_in_mul_expression_are_exponents(expr: Expression) -> bool {
+        all_exponents_in_mul(
+            expr.strip_paren()
+                .flatten_comm(&Operator::Mul)
+                .explicit_exponents(),
+        )
     }
 
     fn no_repeating_bases(expr: Expression) -> bool {
-	all_exponents_in_mul(expr.clone()) && match expr {
-	    Expression::Variadic(Operator::Mul,exprs) if exprs.len() == 1 => exprs.into_iter().all(no_repeating_bases),
-	    Expression::Variadic(Operator::Mul,exprs) => {
-		let mut bases = Vec::new();
-		for expr in &exprs {
-		    if let Expression::Binary(Operator::Exp,base,_) = expr {
-			if bases.contains(&base) {
-			    return false
-			} else {
-			    bases.push(base)
-			}
-		    }
-		}
-		true && exprs.into_iter().all(no_repeating_bases)
-	    }
-	    Expression::Unary(_,expr) => no_repeating_bases(*expr),
-	    Expression::Binary(_,lhs,rhs) => no_repeating_bases(*lhs) && no_repeating_bases(*rhs),
-	    Expression::Variadic(_,exprs) => exprs.into_iter().all(no_repeating_bases),
-	    _ => true
-	}
+        all_exponents_in_mul(expr.clone())
+            && match expr {
+                Expression::Variadic(Operator::Mul, exprs) if exprs.len() == 1 => {
+                    exprs.into_iter().all(no_repeating_bases)
+                }
+                Expression::Variadic(Operator::Mul, exprs) => {
+                    let mut bases = Vec::new();
+                    for expr in &exprs {
+                        if let Expression::Binary(Operator::Exp, base, _) = expr {
+                            if bases.contains(&base) {
+                                return false;
+                            } else {
+                                bases.push(base)
+                            }
+                        }
+                    }
+                    true && exprs.into_iter().all(no_repeating_bases)
+                }
+                Expression::Unary(_, expr) => no_repeating_bases(*expr),
+                Expression::Binary(_, lhs, rhs) => {
+                    no_repeating_bases(*lhs) && no_repeating_bases(*rhs)
+                }
+                Expression::Variadic(_, exprs) => exprs.into_iter().all(no_repeating_bases),
+                _ => true,
+            }
     }
 
     #[quickcheck]
-    fn no_repeated_bases(expr: Expression) -> bool {
-	no_repeating_bases(expr.strip_paren().flatten().explicit_exponents().collect_like_muls())
+    fn no_repeating_bases_in_mul_expression(expr: Expression) -> bool {
+        no_repeating_bases(
+            expr.strip_paren()
+                .flatten()
+                .explicit_exponents()
+                .collect_like_muls(),
+        )
+    }
+
+    #[quickcheck]
+    fn simplification_complete(expr: Expression) -> bool {
+        let expr = expr.simplify();
+        no_neg_expr(expr.clone())
+            && no_sub_expr(expr.clone())
+            && comm_trees_flattened(expr.clone(),&Operator::Add)
+            && comm_trees_flattened(expr.clone(),&Operator::Mul)
+            && no_divs_in_numer(expr.clone())
+            && no_divs_in_denom(expr.clone())
+            && no_divs_in_muls(expr.clone())
+            && no_repeating_bases(expr.explicit_exponents())
     }
 }
