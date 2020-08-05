@@ -66,7 +66,7 @@ mod tests {
     }
     #[quickcheck]
     fn negation_expressions_factored_out(expr: Expression) -> bool {
-        no_neg_expr(expr.strip_paren().factor_out_neg())
+        no_neg_expr(expr.strip().factor_out_neg())
     }
 
     fn no_sub_expr(expr: Expression) -> bool {
@@ -80,7 +80,7 @@ mod tests {
     }
     #[quickcheck]
     fn subtraction_expressions_factored_out(expr: Expression) -> bool {
-        no_sub_expr(expr.strip_paren().factor_out_sub())
+        no_sub_expr(expr.strip().factor_out_sub())
     }
     
     fn comm_trees_flattened(expr: Expression,operator: &Operator) -> bool {
@@ -106,12 +106,12 @@ mod tests {
 
     #[quickcheck]
     fn addition_operations_flattened(expr: Expression) -> bool {
-        comm_trees_flattened(expr.strip_paren().flatten_comm(&Operator::Add),&Operator::Add)
+        comm_trees_flattened(expr.strip().flatten_comm(&Operator::Add),&Operator::Add)
     }
 
     #[quickcheck]
     fn multiplication_operations_flattened(expr: Expression) -> bool {
-        comm_trees_flattened(expr.strip_paren().flatten_comm(&Operator::Mul),&Operator::Mul)
+        comm_trees_flattened(expr.strip().flatten_comm(&Operator::Mul),&Operator::Mul)
     }
 
     fn no_divs_in_numer(expr: Expression) -> bool {
@@ -130,7 +130,7 @@ mod tests {
 
     #[quickcheck]
     fn no_numerators_are_div_expressions(expr: Expression) -> bool {
-        no_divs_in_numer(expr.strip_paren().remove_div_in_numer())
+        no_divs_in_numer(expr.strip().remove_div_in_numer())
     }
 
     fn no_divs_in_denom(expr: Expression) -> bool {
@@ -149,7 +149,7 @@ mod tests {
     
     #[quickcheck]
     fn no_denominators_are_div_expressions(expr: Expression) -> bool {
-        no_divs_in_denom(expr.strip_paren().remove_div_in_denom())
+        no_divs_in_denom(expr.strip().remove_div_in_denom())
     }
 
     
@@ -178,7 +178,7 @@ mod tests {
     #[quickcheck]
     fn no_div_expressions_in_mul_expressions(expr: Expression) -> bool {
         no_divs_in_muls(
-            expr.strip_paren()
+            expr.strip()
                 .flatten_comm(&Operator::Mul)
                 .remove_div_in_mul_node(),
         )
@@ -204,7 +204,7 @@ mod tests {
     #[quickcheck]
     fn all_expressions_in_mul_expression_are_exponents(expr: Expression) -> bool {
         all_exponents_in_mul(
-            expr.strip_paren()
+            expr.strip()
                 .flatten_comm(&Operator::Mul)
                 .explicit_exponents(),
         )
@@ -241,7 +241,7 @@ mod tests {
     #[quickcheck]
     fn no_repeating_bases_in_mul_expression(expr: Expression) -> bool {
         no_repeating_bases(
-            expr.strip_paren()
+            expr.strip()
                 .flatten()
                 .explicit_exponents()
                 .collect_like_muls(),
