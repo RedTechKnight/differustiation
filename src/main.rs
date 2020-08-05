@@ -17,14 +17,15 @@ fn main() {
         let var = args.remove(0).chars().nth(0);
         if let Some(var) = var {
             let expr = parse_expression(&args[0]);
+
             match expr {
-                Some(expr) => println!("{}", expr.simplify().derive(var).simplify()),
+                Some(expr) => println!("{}", expr.simplify().derive(var).present()),
                 None => println!("Expression could not be parsed."),
             }
         } else {
             println!("Variable of differentiation should be at least one character.")
         }
     } else {
-	println!("This program expects 2 arguments, the first a single character for the variable of differentiation, the second the expression you wish to differentiation. \ni.e. cargo run x \"x^x\"\nOnly first character of the first argument is taken.")
+        println!("This program expects 2 arguments, the first a single character for the variable of differentiation, the second the expression you wish to differentiation. \ni.e. cargo run x \"x^x\"\nOnly first character of the first argument is taken.")
     }
 }

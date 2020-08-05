@@ -37,10 +37,21 @@ impl Literal {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialOrd, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Term {
     Numeric(Literal),
     Variable(char),
+}
+
+impl PartialOrd for Term {
+    fn partial_cmp(&self, other: &Term) -> Option<Ordering> {
+        match (self, other) {
+            (Term::Numeric(_), Term::Variable(_)) => Some(Ordering::Less),
+            (Term::Variable(_), Term::Numeric(_)) => Some(Ordering::Greater),
+            (Term::Numeric(a), Term::Numeric(b)) => a.partial_cmp(b),
+            (Term::Variable(a), Term::Variable(b)) => a.partial_cmp(b),
+        }
+    }
 }
 
 impl fmt::Display for Term {
@@ -48,16 +59,6 @@ impl fmt::Display for Term {
         match self {
             Term::Numeric(n) => write!(f, "{}", n),
             Term::Variable(c) => write!(f, "{}", c),
-        }
-    }
-}
-
-impl Term {
-    pub fn into_tex(self) -> String {
-        match self {
-            Term::Numeric(Literal::Integer(i)) => i.to_string(),
-            Term::Numeric(Literal::Real(r)) => r.to_string(),
-            Term::Variable(c) => c.to_string(),
         }
     }
 }
@@ -168,18 +169,18 @@ impl fmt::Display for Expression {
                 op => write!(f, "{}{}", op, *a),
             },
             Expression::Binary(op, a, b) => write!(f, "({} {} {})", *a, op, *b),
-            Expression::Variadic(op, exprs) => {
-                write!(f, "(")?;
-		
-                for expr in exprs.iter().take(exprs.len() - 1) {
-                    write!(f, " {} {}", expr, op)?;
-                }
-                match exprs.iter().last() {
-                    Some(expr) => write!(f, " {}", expr),
-                    _ => write!(f, ""),
-                }?;
-                write!(f, ")")
-            }
+            Expression::Variadic(op, exprs) => write!(
+                f,
+                "({})",
+                exprs
+                    .iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<String>>()
+                    .join(match op {
+                        Operator::Add => " + ",
+                        _ => "*",
+                    })
+            ),
         }
     }
 }
@@ -197,6 +198,23 @@ impl Expression {
     pub fn integer_expression(a: i128) -> Expression {
         Expression::Lit(Term::Numeric(Literal::Integer(a)))
     }
+
+    fn is_zero(&self) -> bool {
+        match self {
+            Expression::Lit(Term::Numeric(Literal::Integer(0))) => true,
+            Expression::Lit(Term::Numeric(Literal::Real(r))) if r == &0.0 => true,
+            _ => false,
+        }
+    }
+
+    fn is_one(&self) -> bool {
+        match self {
+            Expression::Lit(Term::Numeric(Literal::Integer(1))) => true,
+            Expression::Lit(Term::Numeric(Literal::Real(r))) if r == &1.0 => true,
+            _ => false,
+        }
+    }
+
     //Applies function on the remaining cases of an Expression, meant to help cut down on boilerplate.
     pub fn apply_on_others<F: Fn(Expression) -> Expression>(self, f: F) -> Expression {
         match self {
@@ -211,10 +229,11 @@ impl Expression {
         }
     }
 
-    pub fn strip_paren(self) -> Expression {
+    pub fn strip(self) -> Expression {
         match self {
-            Expression::Unary(Operator::Paren, op) => op.strip_paren(),
-            other => other.apply_on_others(Expression::strip_paren),
+            Expression::Unary(Operator::Paren, op) => op.strip(),
+	    Expression::Variadic(_,mut exprs) if exprs.len() == 1 => exprs.remove(0).strip(),
+            other => other.apply_on_others(Expression::strip),
         }
     }
 
@@ -265,14 +284,11 @@ impl Expression {
                 Expression::Variadic(operator.clone(), terms)
             }
             Expression::Variadic(op, exprs) if &op == operator => {
-                let exprs = exprs
-                    .into_iter()
-                    .map(|x| x.flatten_comm(operator))
-                    .collect::<Vec<Expression>>();
                 let (mut to_append, mut rest): (Vec<Expression>, Vec<Expression>) = exprs
                     .into_iter()
+                    .map(|x| x.flatten_comm(operator))
                     .partition(|x| matches!(x,Expression::Variadic(op,_) if op == operator));
-                let mut append = |x: Expression| match x.flatten_comm(operator) {
+                let mut append = |x: Expression| match x {
                     Expression::Variadic(op, mut exprs) if &op == operator => {
                         rest.append(&mut exprs)
                     }
@@ -288,57 +304,58 @@ impl Expression {
     }
 
     //Turns (/ (/ a b) c) into (/ a (* b c))
-    pub fn simplify_rational_1(self) -> Expression {
+    pub fn remove_div_in_numer(self) -> Expression {
         match self {
-            Expression::Binary(Operator::Div, numer, denom) => match numer.simplify_rational_1() {
+            Expression::Binary(Operator::Div, numer, denom) => match numer.remove_div_in_numer() {
                 Expression::Binary(Operator::Div, numer_numer, numer_denom) => Expression::Binary(
                     Operator::Div,
                     numer_numer,
                     Box::new(Expression::Variadic(
                         Operator::Mul,
-                        vec![*numer_denom, denom.simplify_rational_1()],
+                        vec![*numer_denom, denom.remove_div_in_numer()],
                     )),
                 )
-                .simplify_rational_1(),
+                .remove_div_in_numer(),
                 numer => Expression::Binary(
                     Operator::Div,
                     Box::new(numer),
-                    Box::new(denom.simplify_rational_1()),
+                    Box::new(denom.remove_div_in_numer()),
                 ),
             },
-            other => other.apply_on_others(Expression::simplify_rational_1),
+            other => other.apply_on_others(Expression::remove_div_in_numer),
         }
     }
+
     //Turns (/ a (/ b c)) into (/ (* a c) b)
-    pub fn simplify_rational_2(self) -> Expression {
+    pub fn remove_div_in_denom(self) -> Expression {
         match self {
-            Expression::Binary(Operator::Div, numer, denom) => match denom.simplify_rational_2() {
+            Expression::Binary(Operator::Div, numer, denom) => match denom.remove_div_in_denom() {
                 Expression::Binary(Operator::Div, denom_numer, denom_denom) => Expression::Binary(
                     Operator::Div,
                     Box::new(Expression::Variadic(
                         Operator::Mul,
-                        vec![*denom_denom, numer.simplify_rational_2()],
+                        vec![*denom_denom, numer.remove_div_in_denom()],
                     )),
                     denom_numer,
                 )
-                .simplify_rational_2(),
+                .remove_div_in_denom(),
                 denom => Expression::Binary(
                     Operator::Div,
-                    Box::new(numer.simplify_rational_2()),
+                    Box::new(numer.remove_div_in_denom()),
                     Box::new(denom),
                 ),
             },
-            other => other.apply_on_others(Expression::simplify_rational_2),
+            other => other.apply_on_others(Expression::remove_div_in_denom),
         }
     }
 
     //Turns (* a b (/ c d) e f (/ g h) i j...) into (/ (* a b c e f (/g h) i j ...) d) until (/ (* a b c e f g i j) (* d h)) remains
-    pub fn simplify_rational_3(self) -> Expression {
+    pub fn remove_div_in_mul_node(self) -> Expression {
         match self {
             Expression::Variadic(Operator::Mul, mut exprs) => {
                 exprs = exprs
                     .into_iter()
-                    .map(Expression::simplify_rational_3)
+                    .map(Expression::remove_div_in_mul_node)
                     .collect();
                 match exprs
                     .iter_mut()
@@ -351,9 +368,9 @@ impl Expression {
                             Expression::Binary(
                                 Operator::Div,
                                 Box::new(Expression::Variadic(Operator::Mul, exprs)),
-                                Box::new(denom.simplify_rational_3()),
+                                Box::new(denom.remove_div_in_mul_node()),
                             )
-                            .simplify_rational_3()
+                            .remove_div_in_mul_node()
                         } else {
                             //This shouldn't be possible to reach
                             Expression::Variadic(Operator::Mul, exprs)
@@ -362,7 +379,7 @@ impl Expression {
                     None => Expression::Variadic(Operator::Mul, exprs),
                 }
             }
-            other => other.apply_on_others(Expression::simplify_rational_3),
+            other => other.apply_on_others(Expression::remove_div_in_mul_node),
         }
     }
 
@@ -372,15 +389,13 @@ impl Expression {
             Expression::Variadic(Operator::Mul, exprs) => {
                 let exprs = exprs
                     .into_iter()
+                    .map(Expression::explicit_exponents)
                     .map(|expr| match expr {
-                        Expression::Binary(Operator::Exp, lhs, rhs) => Expression::Binary(
-                            Operator::Exp,
-                            Box::new(lhs.explicit_exponents()),
-                            Box::new(rhs.explicit_exponents()),
-                        ),
+                        expr @ Expression::Binary(Operator::Exp, _, _) => expr,
+
                         other => Expression::Binary(
                             Operator::Exp,
-                            Box::new(other.explicit_exponents()),
+                            Box::new(other),
                             Box::new(Expression::integer_expression(1)),
                         ),
                     })
@@ -391,26 +406,28 @@ impl Expression {
         }
     }
 
-    //Makes all expressions under an addition node products. Makes it easier to group them (not implemented yet.)
+    //Makes all expressions under an addition node products. Makes it easier to group them.
     pub fn explicit_coefficients(self) -> Expression {
         match self {
             Expression::Variadic(Operator::Add, exprs) => {
                 let exprs = exprs
                     .into_iter()
+                    .map(Expression::explicit_coefficients)
                     .map(|expr| match expr {
-                        Expression::Variadic(Operator::Mul, exprs) => Expression::Variadic(
-                            Operator::Mul,
-                            exprs
-                                .into_iter()
-                                .map(Expression::explicit_coefficients)
-                                .collect(),
-                        ),
+                        Expression::Variadic(Operator::Mul, mut exprs) => {
+                            if !exprs
+                                .iter()
+                                .any(|expr| matches!(expr, Expression::Lit(Term::Numeric(_))))
+                            {
+                                exprs.push(Expression::integer_expression(1));
+                            }
+
+                            Expression::Variadic(Operator::Mul, exprs)
+                        }
+                        expr @ Expression::Lit(Term::Numeric(_)) => expr,
                         other => Expression::Variadic(
                             Operator::Mul,
-                            vec![
-                                Expression::integer_expression(1),
-                                other.explicit_coefficients(),
-                            ],
+                            vec![Expression::integer_expression(1), other],
                         ),
                     })
                     .collect();
@@ -423,211 +440,185 @@ impl Expression {
     //Groups exponents with the same base
     pub fn collect_like_muls(self) -> Expression {
         match self {
-            Expression::Variadic(Operator::Mul, mut exprs) => {
-                let mut bases = Vec::new();
-                for expr in &exprs {
-                    if let Expression::Binary(Operator::Exp, base, _) = expr {
-                        if !bases.contains(base) {
-                            bases.push(base.clone())
-                        }
-                    }
-                }
-                let mut terms: Vec<(Expression, Vec<Expression>)> = bases
+            Expression::Variadic(Operator::Mul, exprs) => {
+                let exprs = exprs
                     .into_iter()
-                    .map(|x| *x)
-                    .zip(std::iter::repeat(Vec::new()))
-                    .collect();
-
-                while !exprs.is_empty() {
-                    if let Expression::Binary(Operator::Exp, base, mut pow) = exprs.remove(0) {
-                        for term in &mut terms {
-                            if term.0 == *base {
-                                term.1.push(std::mem::replace(
-                                    &mut *pow,
-                                    Expression::integer_expression(0),
-                                ))
-                            }
-                        }
-                    }
-                }
-
-                exprs = terms
-                    .into_iter()
-                    .map(|(base, exp)| {
-                        Expression::Binary(
-                            Operator::Exp,
-                            Box::new(base.collect_like_muls()),
-                            Box::new(Expression::Variadic(
-                                Operator::Add,
-                                exp.into_iter().map(Expression::collect_like_muls).collect(),
-                            )),
-                        )
+                    .map(Expression::collect_like_muls)
+                    .filter_map(|expr| match expr {
+                        Expression::Binary(Operator::Exp, base, pow) => Some((base, pow)),
+                        _ => None,
                     })
                     .collect();
-                Expression::Variadic(Operator::Mul, exprs)
+                let grouped = group_similar_by(exprs, |(base_a, _), (base_b, _)| base_a == base_b)
+                    .into_iter()
+                    .filter_map(|vec| match vec.first().cloned() {
+                        Some((base, _)) => Some(Expression::Binary(
+                            Operator::Exp,
+                            base,
+                            Box::new(Expression::Variadic(
+                                Operator::Add,
+                                vec.into_iter().map(|(_, b)| *b).collect(),
+                            )),
+                        )),
+                        None => None,
+                    })
+                    .collect();
+                Expression::Variadic(Operator::Mul, grouped)
             }
             other => other.apply_on_others(Expression::collect_like_muls),
         }
     }
 
+    //Groups products with the same variables
     pub fn collect_like_adds(self) -> Expression {
         match self {
-            Expression::Variadic(Operator::Add, mut exprs) => {
-                exprs = exprs
+            Expression::Variadic(Operator::Add, exprs) => {
+                let exprs = exprs
                     .into_iter()
                     .map(Expression::collect_like_adds)
-                    .collect();
-                let mut new_exprs: Vec<Expression> = Vec::new();
-                let mut non_numeric =
-                    |expr: &Expression| !matches!(expr, Expression::Lit(Term::Numeric(_)));
-                while !exprs.is_empty() {
-                    let next = exprs.remove(0);
-                    match new_exprs.iter().position(|expr| {
-                        if let (
-                            Expression::Variadic(Operator::Mul, exprs_a),
-                            Expression::Variadic(Operator::Mul, exprs_b),
-                        ) = (&next, expr)
-                        {
-                            exprs_a
-                                .iter()
-                                .filter(|x| non_numeric(x))
-                                .zip(exprs_b.iter().filter(|x| non_numeric(x)))
-                                .all(|(a, b)| a == b)
-                        } else {
-                            false
+                    .filter_map(|expr| match expr {
+                        Expression::Variadic(Operator::Mul, exprs) => {
+                            Some(exprs.into_iter().partition(|expr| {
+                                matches!(expr, Expression::Lit(Term::Numeric(_)))
+                            }))
                         }
-                    }) {
-                        Some(index) => {
-                            if let Some(mut expr) = new_exprs.get_mut(index) {
-                                match expr {
-                                    Expression::Variadic(Operator::Mul, exprs) => {
-                                        match exprs.iter().position(|expr| {
-                                            matches!(expr, Expression::Lit(Term::Numeric(_)))
-                                        }) {
-                                            Some(index) => {
-                                                if let Some(Expression::Lit(Term::Numeric(t))) =
-                                                    exprs.get_mut(index)
-                                                {
-                                                    *t = Literal::apply(
-                                                        *t,
-                                                        Literal::Integer(1),
-                                                        i128::add,
-                                                        f64::add,
-                                                    );
-                                                }
-                                            }
-                                            None => exprs.push(Expression::integer_expression(2)),
-                                        }
-                                    }
-                                    _ => (),
-                                }
-                            }
-                        }
-                        None => new_exprs.push(next),
-                    }
-                }
-                Expression::Variadic(Operator::Add, new_exprs)
+                        expr @ Expression::Lit(Term::Numeric(_)) => Some((vec![expr], Vec::new())),
+                        _ => None,
+                    })
+                    .collect::<Vec<(Vec<Expression>, Vec<Expression>)>>();
+
+                let grouped =
+                    group_similar_by(exprs, |(_, terms_a), (_, terms_b)| terms_a == terms_b)
+                        .into_iter()
+                        .map(|vec| {
+                            let (coeffs, mut terms) = vec.into_iter().fold(
+                                (Vec::new(), Vec::new()),
+                                |(mut coeffs_acc, _), (mut coeffs_x, terms_x)| {
+                                    coeffs_acc.append(&mut coeffs_x);
+                                    (coeffs_acc, terms_x)
+                                },
+                            );
+                            //let initial = if terms.is_empty() {Expression::integer_expression(0)} else {Expression::integer_expression(1)};
+                            //let op_i128 = if terms.is_empty() {Expression::integer_expre
+
+                            terms.push(coeffs.into_iter().fold(
+                                Expression::integer_expression(0),
+                                |acc, expr| match (acc, expr) {
+                                    (
+                                        Expression::Lit(Term::Numeric(a)),
+                                        Expression::Lit(Term::Numeric(b)),
+                                    ) => Expression::Lit(Term::Numeric(Literal::apply(
+                                        a,
+                                        b,
+                                        i128::add,
+                                        f64::add,
+                                    ))),
+                                    (acc, _) => acc,
+                                },
+                            ));
+                            Expression::Variadic(Operator::Mul, terms)
+                        })
+                        .collect();
+
+                Expression::Variadic(Operator::Add, grouped)
             }
             other => other.apply_on_others(Expression::collect_like_adds),
         }
     }
 
-    pub fn simplify_constants(self) -> Expression {
-        let zero_i = Expression::integer_expression(0);
-        let zero_r = Expression::real_expression(0.0);
-        let one_i = Expression::integer_expression(1);
-        let one_r = Expression::real_expression(1.0);
+    pub fn distribute_exponents(self) -> Expression {
         match self {
-            Expression::Binary(Operator::Exp, mut base, mut pow) => {
-                *base = base.simplify_constants();
-                *pow = pow.simplify_constants();
-                if *pow == one_i || *base == one_i || *pow == one_r || *base == one_r {
-                    *base
-                } else if (*pow == zero_i || *pow == zero_r)
-                    && !(*base == zero_i || *base == zero_r)
-                {
-                    one_i
-                } else if (*base == zero_i || *base == zero_r)
-                    && !(*pow == zero_i || *pow == zero_r)
-                {
-                    zero_i
-                } else {
-                    Expression::Binary(Operator::Exp, base, pow)
-                }
-            }
-            Expression::Variadic(Operator::Mul, mut exprs) => {
-                exprs = exprs
-                    .into_iter()
-                    .map(Expression::simplify_constants)
-                    .collect();
-                exprs.retain(|expr| !(*expr == one_i || *expr == one_r));
-                if exprs.is_empty() {
+            Expression::Binary(Operator::Exp, base, pow) => match *base {
+                Expression::Variadic(Operator::Mul, exprs) => Expression::Variadic(
+                    Operator::Mul,
+                    exprs
+                        .into_iter()
+                        .map(|expr| match expr {
+                            Expression::Binary(Operator::Exp, base, inner_pow) => {
+                                Expression::Binary(
+                                    Operator::Exp,
+                                    base,
+                                    Box::new(Expression::Variadic(
+                                        Operator::Mul,
+                                        vec![*pow.clone(), *inner_pow],
+                                    )),
+                                )
+                            }
+                            expr => Expression::Binary(Operator::Exp, Box::new(expr), pow.clone()),
+                        })
+                        .collect(),
+                ),
+                Expression::Binary(Operator::Exp, base, inner_pow) => Expression::Binary(
+                    Operator::Exp,
+                    base,
+                    Box::new(Expression::Variadic(Operator::Mul, vec![*pow, *inner_pow])),
+                ),
+                _ => Expression::Binary(Operator::Exp, base, pow),
+            },
+            other => other.apply_on_others(Expression::distribute_exponents),
+        }
+    }
+
+    pub fn simplify_exponents(self) -> Expression {
+        match self {
+            Expression::Binary(Operator::Exp, base, pow) => {
+                let base = base.simplify_exponents();
+                let pow = pow.simplify_exponents();
+                if pow.is_zero() && !base.is_zero() {
                     Expression::integer_expression(1)
-                } else if exprs.iter().any(|x| *x == zero_i || *x == zero_r) {
-                    zero_i
-                } else if exprs
-                    .iter()
-                    .any(|x| matches!(x, Expression::Lit(Term::Numeric(_))))
-                {
-                    let (consts, mut exprs): (Vec<Expression>, Vec<Expression>) = exprs
-                        .into_iter()
-                        .partition(|x| matches!(x, Expression::Lit(Term::Numeric(_))));
-                    exprs.push(Expression::Lit(Term::Numeric(consts.into_iter().fold(
-                        Literal::Integer(1),
-                        |acc, expr| match expr {
-                            Expression::Lit(Term::Numeric(lit)) => {
-                                Literal::apply(acc, lit, i128::mul, f64::mul)
-                            }
-                            _ => acc,
-                        },
-                    ))));
-                    if exprs.len() == 1 {
-                        exprs.remove(0)
-                    } else {
-                        Expression::Variadic(Operator::Mul, exprs)
-                    }
-                } else if exprs.len() == 1 {
-                    exprs.remove(0).simplify_constants()
+                } else if pow.is_one() || base.is_one() || (base.is_zero() && !pow.is_zero()) {
+                    base
                 } else {
-                    Expression::Variadic(Operator::Mul, exprs)
+                    Expression::Binary(Operator::Exp, Box::new(base), Box::new(pow))
                 }
             }
-            Expression::Variadic(Operator::Add, mut exprs) => {
-                exprs = exprs
+            other => other.apply_on_others(Expression::simplify_exponents),
+        }
+    }
+    //Evaluate constants literals in addition and multiplication nodes.
+    pub fn fold_constants(self) -> Expression {
+        match self {
+            Expression::Variadic(operator, exprs) => {
+                let (consts, mut vars): (Vec<Expression>, Vec<Expression>) = exprs
                     .into_iter()
-                    .map(Expression::simplify_constants)
-                    .collect();
-                exprs.retain(|expr| !(*expr == zero_i || *expr == zero_r));
-                if exprs.is_empty() {
-                    Expression::integer_expression(0)
-                } else if exprs
-                    .iter()
-                    .any(|x| matches!(x, Expression::Lit(Term::Numeric(_))))
-                {
-                    let (consts, mut exprs): (Vec<Expression>, Vec<Expression>) = exprs
-                        .into_iter()
-                        .partition(|x| matches!(x, Expression::Lit(Term::Numeric(_))));
-                    exprs.push(Expression::Lit(Term::Numeric(consts.into_iter().fold(
-                        Literal::Integer(0),
-                        |acc, expr| match expr {
-                            Expression::Lit(Term::Numeric(lit)) => {
-                                Literal::apply(acc, lit, i128::add, f64::add)
-                            }
-                            _ => acc,
-                        },
-                    ))));
-                    if exprs.len() == 1 {
-                        exprs.remove(0)
-                    } else {
-                        Expression::Variadic(Operator::Add, exprs)
+                    .map(Expression::fold_constants)
+                    .partition(|expr| matches!(expr, Expression::Lit(Term::Numeric(_))));
+                let initial = match operator {
+                    Operator::Add => Expression::integer_expression(0),
+                    _ => Expression::integer_expression(1),
+                };
+                let op_i128 = match operator {
+                    Operator::Add => i128::add,
+                    _ => i128::mul,
+                };
+                let op_f64 = match operator {
+                    Operator::Add => f64::add,
+                    _ => f64::mul,
+                };
+                let result = consts.into_iter().fold(initial, |acc, x| match (acc, x) {
+                    (Expression::Lit(Term::Numeric(a)), Expression::Lit(Term::Numeric(b))) => {
+                        Expression::Lit(Term::Numeric(Literal::apply(a, b, op_i128, op_f64)))
                     }
-                } else if exprs.len() == 1 {
-                    exprs.remove(0).simplify_constants()
+                    (acc, _) => acc,
+                });
+                if vars.is_empty() {
+                    result
+                } else if (operator == Operator::Add && result.is_zero())
+                    || (operator == Operator::Mul && result.is_one())
+                {
+                    if vars.len() == 1 {
+                        vars.remove(0)
+                    } else {
+                        Expression::Variadic(operator, vars)
+                    }
+                } else if operator == Operator::Mul && result.is_zero() {
+                    result
                 } else {
-                    Expression::Variadic(Operator::Add, exprs)
+                    vars.push(result);
+                    Expression::Variadic(operator, vars)
                 }
             }
-            other => other.apply_on_others(Expression::simplify_constants),
+            other => other.apply_on_others(Expression::fold_constants),
         }
     }
 
@@ -645,21 +636,19 @@ impl Expression {
     pub fn simplify(self) -> Expression {
         let last_self = self.clone();
         let simplified = self
-            .strip_paren()
+            .strip()
             .factor_out_neg()
             .factor_out_sub()
             .flatten()
-            .simplify_rational_1()
-            .simplify_rational_2()
-            .simplify_rational_3()
+            .remove_div_in_numer()
+            .remove_div_in_denom()
+            .remove_div_in_mul_node()
             .flatten()
             .explicit_exponents()
             .collect_like_muls()
             .flatten()
-	    .explicit_coefficients()
-	    .collect_like_adds()
-	    .flatten()
-            .simplify_constants();
+            .simplify_exponents()
+            .fold_constants();
         if simplified == last_self {
             simplified.order()
         } else {
@@ -667,6 +656,90 @@ impl Expression {
         }
     }
 
+    fn divs_to_neg_exponents(self) -> Expression {
+        match self {
+            Expression::Binary(Operator::Div, a, b) => Expression::Variadic(
+                Operator::Mul,
+                vec![
+                    a.divs_to_neg_exponents(),
+                    Expression::Binary(
+                        Operator::Exp,
+                        Box::new(b.divs_to_neg_exponents()),
+                        Box::new(Expression::integer_expression(-1)),
+                    ),
+                ],
+            ),
+            others => others.apply_on_others(Expression::divs_to_neg_exponents),
+        }
+    }
+
+    fn neg_exponents_to_divs(self) -> Expression {
+        match self {
+            Expression::Binary(Operator::Exp, a, b)
+                if *b == Expression::integer_expression(-1)
+                    || *b == Expression::real_expression(-1.0) =>
+            {
+                Expression::Binary(
+                    Operator::Div,
+                    Box::new(Expression::integer_expression(1)),
+                    Box::new(a.neg_exponents_to_divs()),
+                )
+            }
+            others => others.apply_on_others(Expression::neg_exponents_to_divs),
+        }
+    }
+
+    //An attempt at obtaining an easier to look at expression
+    pub fn present(self) -> Expression {
+        let last_self = self.clone();
+        let simplified = self
+            .strip()
+	    .divs_to_neg_exponents()
+            .factor_out_neg()
+            .factor_out_sub()
+            .flatten()
+            .remove_div_in_numer()
+            .remove_div_in_denom()
+            .remove_div_in_mul_node()
+            .distribute_exponents()
+            .flatten()
+            .explicit_exponents()
+            .collect_like_muls()
+            .flatten()
+            .simplify_exponents()
+            .fold_constants()
+            .explicit_coefficients()
+            .collect_like_adds()
+            .flatten()
+            .simplify_exponents()
+            .fold_constants()
+            .distribute_exponents()
+	    .order();
+
+        if simplified == last_self {
+            simplified.neg_exponents_to_divs().present_phase_2()
+        } else {
+            simplified.present()
+        }
+    }
+    fn present_phase_2(self) -> Expression {
+	let last_self = self.clone();
+	let simplified = self
+	    .strip()
+	    .remove_div_in_denom()
+	    .remove_div_in_numer()
+	    .remove_div_in_mul_node()
+	    .flatten()
+	    .simplify_exponents()
+	    .fold_constants();
+	    
+        if simplified == last_self {
+            simplified.order()
+        } else {
+            simplified.present_phase_2()
+        }
+    }
+    
     //The reason all this other code exists. Recursively produces the derivate of a given expression with respect to its supplied argument
     pub fn derive(self, wrt: char) -> Expression {
         match self {
@@ -679,17 +752,10 @@ impl Expression {
                 Operator::Mul,
                 vec![Expression::integer_expression(-1), a.derive(wrt)],
             ),
-            Expression::Unary(Operator::Custom(f), x) if f == "ln" => Expression::Variadic(
-                Operator::Mul,
-                vec![
-                    x.clone().derive(wrt),
-                    Expression::Binary(
-                        Operator::Exp,
-                        x,
-                        Box::new(Expression::integer_expression(-1)),
-                    ),
-                ],
-            ),
+            Expression::Unary(Operator::Custom(f), x) if f == "ln" => {
+                Expression::Binary(Operator::Div, Box::new(x.clone().derive(wrt)), x)
+            }
+
             Expression::Unary(Operator::Custom(f), x) if f == "sin" => Expression::Variadic(
                 Operator::Mul,
                 vec![
@@ -781,49 +847,23 @@ impl Expression {
             other => other,
         }
     }
-    //Quick and dirty way to get a string you can throw into a LaTeX renderer, can make visually inspecting results easier.
-    pub fn into_tex(self) -> String {
-        match self {
-            Expression::Lit(literal) => literal.into_tex(),
-            Expression::Unary(operator, operand) => match operator {
-                Operator::Paren => format!("({})", operand.into_tex()),
-                Operator::Neg => format!("-({})", operand.into_tex()),
-                Operator::Custom(fun_name) => format!("{}({})", fun_name, operand.into_tex()),
-                _ => "".to_string(),
-            },
-            Expression::Binary(operator, left, right) => match operator {
-                Operator::Add => format!("{} + {}", left.into_tex(), right.into_tex()),
-                Operator::Sub => format!("{} - {}", left.into_tex(), right.into_tex()),
-                Operator::Div => format!("\\frac{{{}}}{{{}}}", left.into_tex(), right.into_tex()),
-                Operator::Mul => format!("{} \\times {}", left.into_tex(), right.into_tex()),
-                Operator::Exp => format!("({}^{{{}}})", left.into_tex(), right.into_tex()),
-                _ => "".to_string(),
-            },
-            Expression::Variadic(operation, args) => {
-                let mut list = args
-                    .into_iter()
-                    .map(|x| x.into_tex())
-                    .collect::<Vec<String>>();
-                let mut output = Vec::new();
-                if !list.is_empty() {
-                    output.push("(".to_string());
-                    output.push(list.remove(0));
-                }
+}
 
-                while !list.is_empty() {
-                    output.push(
-                        match operation {
-                            Operator::Add => " + ",
-                            Operator::Mul => " \\times ",
-                            _ => "",
-                        }
-                        .to_string(),
-                    );
-                    output.push(list.remove(0));
-                }
-                output.push(")".to_string());
-                output.into_iter().collect()
-            }
+fn group_similar_by<A: Clone, F: Fn(&A, &A) -> bool>(vec: Vec<A>, f: F) -> Vec<Vec<A>> {
+    let mut output = Vec::new();
+    let first = vec.first();
+    match first.cloned() {
+        Some(first) => {
+            let (like_first, unlike_first) = vec.into_iter().partition(|x| f(x, &first));
+            let mut grouped = group_similar_by(unlike_first, f);
+            grouped.insert(0, like_first);
+            output = grouped;
         }
+        None => (),
     }
+    output
+}
+
+fn group_similar<A: PartialEq + Clone>(vec: Vec<A>) -> Vec<Vec<A>> {
+    group_similar_by(vec, PartialEq::eq)
 }
