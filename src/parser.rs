@@ -1,16 +1,40 @@
-use crate::expression::{Expression, Operator};
+use crate::expression::{Expression, Literal, Operator};
+use std::collections::HashMap;
 use std::iter::Peekable;
 pub fn parse_expression(input: &str) -> Option<Expression> {
     let tokens = tokenise(&mut input.chars().peekable());
     parse_add(&mut tokens.into_iter().peekable())
 }
+enum Token {
+    Plus,
+    Minus,
+    Div,
+    Mul,
+    Exp,
+    LParen,
+    RParen,
+    Num(Literal),
+    Var(char),
+    Fun(String),
+}
 
-fn tokenise<I: Iterator<Item = char>>(input: &mut Peekable<I>) -> Vec<String> {
+fn tokenise<I: Iterator<Item = char>>(input: &mut Peekable<I>) -> Vec<Token> {
     let mut output = Vec::new();
+    let mut token_map = vec![
+        ('+', Token::Plus),
+        ('-', Token::Minus),
+        ('/', Token::Div),
+        ('*', Token::Mul),
+        ('^', Token::Exp),
+        ('(', Token::LParen),
+        (')', Token::RParen),
+    ]
+    .into_iter()
+    .collect::<HashMap<char, Token>>();
     while let Some(chr) = input.next() {
         match chr {
             chr if ['+', '-', '/', '*', '^', '(', ')'].contains(&chr) => {
-                output.push(chr.to_string())
+                output.push(token_map[&chr])
             }
             chr if chr.is_digit(10) => {
                 let mut num = String::new();
@@ -26,19 +50,27 @@ fn tokenise<I: Iterator<Item = char>>(input: &mut Peekable<I>) -> Vec<String> {
                         break;
                     }
                 }
-                output.push(num)
+                if let Ok(num) = num.parse::<i128>() {
+                    output.push(Token::Num(Literal::Integer(num)))
+                } else if let Ok(num) = num.parse::<f64>() {
+		    output.push(Token::Num(Literal::Real(num)))
+		}
             }
             chr if chr.is_alphabetic() => {
                 let mut word = String::new();
                 word.push(chr);
                 while let Some(chr) = input.peek() {
-                    if chr.is_alphabetic() || chr.is_digit(10) {
+                    if chr.is_alphabetic() {
                         word.push(input.next().unwrap())
                     } else {
                         break;
                     }
                 }
-                output.push(word)
+                if word.len() == 1 {
+		    output.push(Token::Var(word.remove(0)))
+		} else {
+		    output.push(Token::Fun(word))
+		}
             }
             chr if [' '].contains(&chr) => (),
             _ => (),
