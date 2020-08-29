@@ -2,7 +2,7 @@ mod tests {
 
     use crate::expression::{Expression, Literal, Operator, Term};
     use quickcheck::{Arbitrary, Gen};
-
+    use quickcheck_macros::quickcheck;
     impl Arbitrary for Literal {
         fn arbitrary<G: Gen>(g: &mut G) -> Self {
             match rand::random::<usize>() % 2 {
@@ -54,7 +54,7 @@ mod tests {
     }
 
     //These all test if the various expression simplification functions work as intended basically.
-    
+
     fn no_neg_expr(expr: Expression) -> bool {
         match expr {
             Expression::Unary(Operator::Neg, _) => false,
@@ -82,8 +82,8 @@ mod tests {
     fn subtraction_expressions_factored_out(expr: Expression) -> bool {
         no_sub_expr(expr.strip().factor_out_sub())
     }
-    
-    fn comm_trees_flattened(expr: Expression,operator: &Operator) -> bool {
+
+    fn comm_trees_flattened(expr: Expression, operator: &Operator) -> bool {
         match expr {
             Expression::Binary(op, _, _) if &op == operator => false,
             Expression::Variadic(op, exprs) if &op == operator => {
@@ -93,25 +93,29 @@ mod tests {
                         Expression::Binary(op, _, _)|
                         Expression::Variadic(op, _) if op == operator
                     )
-                }) && exprs.into_iter().all(|expr| comm_trees_flattened(expr,operator))
+                }) && exprs
+                    .into_iter()
+                    .all(|expr| comm_trees_flattened(expr, operator))
             }
-            Expression::Variadic(_, exprs) => exprs.into_iter().all(|expr| comm_trees_flattened(expr,operator)),
+            Expression::Variadic(_, exprs) => exprs
+                .into_iter()
+                .all(|expr| comm_trees_flattened(expr, operator)),
             Expression::Binary(_, lhs, rhs) => {
-                comm_trees_flattened(*lhs,operator) && comm_trees_flattened(*rhs,operator)
+                comm_trees_flattened(*lhs, operator) && comm_trees_flattened(*rhs, operator)
             }
-            Expression::Unary(_, expr) => comm_trees_flattened(*expr,operator),
+            Expression::Unary(_, expr) => comm_trees_flattened(*expr, operator),
             _ => true,
         }
     }
 
     #[quickcheck]
     fn addition_operations_flattened(expr: Expression) -> bool {
-        comm_trees_flattened(expr.strip().flatten_comm(&Operator::Add),&Operator::Add)
+        comm_trees_flattened(expr.strip().flatten_comm(&Operator::Add), &Operator::Add)
     }
 
     #[quickcheck]
     fn multiplication_operations_flattened(expr: Expression) -> bool {
-        comm_trees_flattened(expr.strip().flatten_comm(&Operator::Mul),&Operator::Mul)
+        comm_trees_flattened(expr.strip().flatten_comm(&Operator::Mul), &Operator::Mul)
     }
 
     fn no_divs_in_numer(expr: Expression) -> bool {
@@ -146,13 +150,11 @@ mod tests {
             _ => true,
         }
     }
-    
+
     #[quickcheck]
     fn no_denominators_are_div_expressions(expr: Expression) -> bool {
         no_divs_in_denom(expr.strip().remove_div_in_denom())
     }
-
-    
 
     fn no_divs_in_muls(expr: Expression) -> bool {
         match expr {
@@ -253,8 +255,8 @@ mod tests {
         let expr = expr.simplify();
         no_neg_expr(expr.clone())
             && no_sub_expr(expr.clone())
-            && comm_trees_flattened(expr.clone(),&Operator::Add)
-            && comm_trees_flattened(expr.clone(),&Operator::Mul)
+            && comm_trees_flattened(expr.clone(), &Operator::Add)
+            && comm_trees_flattened(expr.clone(), &Operator::Mul)
             && no_divs_in_numer(expr.clone())
             && no_divs_in_denom(expr.clone())
             && no_divs_in_muls(expr.clone())

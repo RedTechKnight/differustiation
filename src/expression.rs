@@ -187,9 +187,6 @@ impl fmt::Display for Expression {
 
 //The methods are mostly different steps of the simplification process
 impl Expression {
-    pub fn variable_expression(a: char) -> Expression {
-        Expression::Lit(Term::Variable(a))
-    }
 
     pub fn real_expression(a: f64) -> Expression {
         Expression::Lit(Term::Numeric(Literal::Real(a)))
@@ -862,8 +859,4 @@ fn group_similar_by<A: Clone, F: Fn(&A, &A) -> bool>(vec: Vec<A>, f: F) -> Vec<V
         None => (),
     }
     output
-}
-
-fn group_similar<A: PartialEq + Clone>(vec: Vec<A>) -> Vec<Vec<A>> {
-    group_similar_by(vec, PartialEq::eq)
 }
