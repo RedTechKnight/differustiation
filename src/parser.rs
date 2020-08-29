@@ -5,7 +5,7 @@ pub fn parse_expression(input: &str) -> Result<Expression,String> {
     let tokens = tokenise(&mut input.chars().peekable());
     parse_add(&mut tokens.into_iter().peekable())
 }
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 enum Token {
     Plus,
     Minus,
@@ -35,7 +35,7 @@ fn tokenise<I: Iterator<Item = char>>(input: &mut Peekable<I>) -> Vec<Token> {
     while let Some(chr) = input.next() {
         match chr {
             chr if ['+', '-', '/', '*', '^', '(', ')'].contains(&chr) => {
-                output.push(token_map[&chr])
+                output.push(token_map[&chr].clone())
             }
             chr if chr.is_digit(10) => {
                 let mut num = String::new();
@@ -87,6 +87,7 @@ fn parse_primary<I: Iterator<Item = Token>>(input: &mut Peekable<I>) -> Result<E
             match input.next() {
                 Some(Token::RParen) => Ok(Expression::Unary(Operator::Paren, Box::new(inner_expr))),
                 Some(other) => Err(format!("Expected ')', found {:?}", other)),
+		None => Err(format!("Expecteed ')', reached end of input"))
             }
         }
         Some(Token::Num(lit)) => Ok(Expression::Lit(Term::Numeric(lit))),
@@ -102,12 +103,15 @@ fn parse_primary<I: Iterator<Item = Token>>(input: &mut Peekable<I>) -> Result<E
                         "Expected ')' at end of function expression, found {:?}",
                         other
                     )),
+		    None => Err(format!("Expected ')' at end of function expression, reached end of input."))
                 }
             }
             Some(other) => Err(format!(
                 "Expected '(' after function name, found {:?}",
                 other
             )),
+	    None => Err(format!("Expected '(' after function name, reached end of input"))
+	    
         },
         other => Err(format!("Unexpected token: {:?}",other)),
     }

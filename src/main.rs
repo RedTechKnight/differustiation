@@ -19,8 +19,8 @@ fn main() {
             let expr = parse_expression(&args[0]);
 
             match expr {
-                Some(expr) => println!("{}", expr.simplify().derive(var).present()),
-                None => println!("Expression could not be parsed."),
+                Ok(expr) => println!("{}", expr.simplify().derive(var).present()),
+                Err(err) => println!("Error during parsing expression: {}", err),
             }
         } else {
             println!("Variable of differentiation should be at least one character.")
