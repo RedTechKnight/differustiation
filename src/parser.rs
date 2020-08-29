@@ -1,11 +1,11 @@
 use crate::expression::{Expression, Literal, Operator, Term};
 use std::collections::HashMap;
 use std::iter::Peekable;
-pub fn parse_expression(input: &str) -> Result<Expression,String> {
+pub fn parse_expression(input: &str) -> Result<Expression, String> {
     let tokens = tokenise(&mut input.chars().peekable());
-    parse_add(&mut tokens.into_iter().peekable())
+    parse_binary(&mut tokens.into_iter().peekable(), 0)
 }
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone, PartialEq)]
 enum Token {
     Plus,
     Minus,
@@ -21,7 +21,7 @@ enum Token {
 
 fn tokenise<I: Iterator<Item = char>>(input: &mut Peekable<I>) -> Vec<Token> {
     let mut output = Vec::new();
-    let mut token_map = vec![
+    let token_map = vec![
         ('+', Token::Plus),
         ('-', Token::Minus),
         ('/', Token::Div),
@@ -83,18 +83,18 @@ fn tokenise<I: Iterator<Item = char>>(input: &mut Peekable<I>) -> Vec<Token> {
 fn parse_primary<I: Iterator<Item = Token>>(input: &mut Peekable<I>) -> Result<Expression, String> {
     match input.next() {
         Some(Token::LParen) => {
-            let inner_expr = parse_add(input)?;
+            let inner_expr = parse_binary(input, 0)?;
             match input.next() {
                 Some(Token::RParen) => Ok(Expression::Unary(Operator::Paren, Box::new(inner_expr))),
                 Some(other) => Err(format!("Expected ')', found {:?}", other)),
-		None => Err(format!("Expecteed ')', reached end of input"))
+                None => Err(format!("Expecteed ')', reached end of input")),
             }
         }
         Some(Token::Num(lit)) => Ok(Expression::Lit(Term::Numeric(lit))),
         Some(Token::Var(v)) => Ok(Expression::Lit(Term::Variable(v))),
         Some(Token::Fun(f)) => match input.next() {
             Some(Token::LParen) => {
-                let operand = parse_add(input)?;
+                let operand = parse_binary(input, 0)?;
                 match input.next() {
                     Some(Token::RParen) => {
                         Ok(Expression::Unary(Operator::Custom(f), Box::new(operand)))
@@ -103,21 +103,24 @@ fn parse_primary<I: Iterator<Item = Token>>(input: &mut Peekable<I>) -> Result<E
                         "Expected ')' at end of function expression, found {:?}",
                         other
                     )),
-		    None => Err(format!("Expected ')' at end of function expression, reached end of input."))
+                    None => Err(format!(
+                        "Expected ')' at end of function expression, reached end of input."
+                    )),
                 }
             }
             Some(other) => Err(format!(
                 "Expected '(' after function name, found {:?}",
                 other
             )),
-	    None => Err(format!("Expected '(' after function name, reached end of input"))
-	    
+            None => Err(format!(
+                "Expected '(' after function name, reached end of input"
+            )),
         },
-        other => Err(format!("Unexpected token: {:?}",other)),
+        other => Err(format!("Unexpected token: {:?}", other)),
     }
 }
 
-fn parse_unary<I: Iterator<Item = Token>>(input: &mut Peekable<I>) -> Result<Expression,String> {
+fn parse_unary<I: Iterator<Item = Token>>(input: &mut Peekable<I>) -> Result<Expression, String> {
     match input.peek() {
         Some(Token::Minus) => {
             input.next();
@@ -129,12 +132,14 @@ fn parse_unary<I: Iterator<Item = Token>>(input: &mut Peekable<I>) -> Result<Exp
     }
 }
 
-fn parse_exp<I: Iterator<Item = Token>>(input: &mut Peekable<I>) -> Result<Expression,String> {
+fn parse_binary_right_assoc<I: Iterator<Item = Token>>(
+    input: &mut Peekable<I>,
+) -> Result<Expression, String> {
     let lhs = parse_unary(input)?;
     match input.peek() {
         Some(Token::Exp) => {
             input.next();
-            let rhs = parse_exp(input)?;
+            let rhs = parse_binary_right_assoc(input)?;
             Ok(Expression::Binary(
                 Operator::Exp,
                 Box::new(lhs),
@@ -145,62 +150,49 @@ fn parse_exp<I: Iterator<Item = Token>>(input: &mut Peekable<I>) -> Result<Expre
     }
 }
 
-fn left_assoc_mul<I: Iterator<Item = Token>>(
+fn left_assoc<I: Iterator<Item = Token>>(
     lhs: Expression,
     input: &mut Peekable<I>,
-) -> Result<Expression,String> {
-    match input.peek() {
-        Some(Token::Mul) => {
+    precedence: i32,
+) -> Result<Expression, String> {
+    let operators = vec![
+        (0, vec![Token::Plus, Token::Minus]),
+        (1, vec![Token::Mul, Token::Div]),
+    ]
+    .into_iter()
+    .collect::<HashMap<i32, Vec<Token>>>();
+    let op = |tok: Token| match tok {
+        Token::Plus => Operator::Add,
+        Token::Minus => Operator::Sub,
+        Token::Mul => Operator::Mul,
+        _ => Operator::Div,
+    };
+    match input.peek().cloned() {
+        Some(tok) if operators[&precedence].contains(&tok) => {
             input.next();
-            let rhs = parse_exp(input)?;
-
-            left_assoc_mul(
-                Expression::Binary(Operator::Mul, Box::new(lhs), Box::new(rhs)),
+            let rhs = if precedence == 0 {
+                parse_binary(input, precedence + 1)?
+            } else {
+                parse_binary_right_assoc(input)?
+            };
+            left_assoc(
+                Expression::Binary(op(tok), Box::new(lhs), Box::new(rhs)),
                 input,
-            )
-        }
-        Some(Token::Div) => {
-            input.next();
-            let rhs = parse_exp(input)?;
-            left_assoc_mul(
-                Expression::Binary(Operator::Div, Box::new(lhs), Box::new(rhs)),
-                input,
+                precedence,
             )
         }
         _ => Ok(lhs),
     }
 }
 
-fn parse_mul<I: Iterator<Item = Token>>(input: &mut Peekable<I>) -> Result<Expression,String> {
-    let lhs = parse_exp(input)?;
-    left_assoc_mul(lhs, input)
-}
-
-fn left_assoc_add<I: Iterator<Item = Token>>(
-    lhs: Expression,
+fn parse_binary<I: Iterator<Item = Token>>(
     input: &mut Peekable<I>,
-) -> Result<Expression,String> {
-    match input.peek() {
-        Some(Token::Plus) => {
-            input.next();
-            let rhs = parse_mul(input)?;
-            left_assoc_add(
-                Expression::Binary(Operator::Add, Box::new(lhs), Box::new(rhs)),
-                input,
-            )
-        }
-        Some(Token::Minus) => {
-            input.next();
-            let rhs = parse_mul(input)?;
-            left_assoc_add(
-                Expression::Binary(Operator::Sub, Box::new(lhs), Box::new(rhs)),
-                input,
-            )
-        }
-        _ => Ok(lhs),
-    }
-}
-fn parse_add<I: Iterator<Item = Token>>(input: &mut Peekable<I>) -> Result<Expression,String> {
-    let lhs = parse_mul(input)?;
-    left_assoc_add(lhs, input)
+    precedence: i32,
+) -> Result<Expression, String> {
+    let lhs = if precedence == 0 {
+        parse_binary(input, precedence + 1)?
+    } else {
+        parse_binary_right_assoc(input)?
+    };
+    left_assoc(lhs, input, precedence)
 }

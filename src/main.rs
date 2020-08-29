@@ -26,6 +26,6 @@ fn main() {
             println!("Variable of differentiation should be at least one character.")
         }
     } else {
-        println!("This program expects 2 arguments, the first a single character for the variable of differentiation, the second the expression you wish to differentiation. \ni.e. cargo run x \"x^x\"\nOnly first character of the first argument is taken.")
+        println!("This program expects 2 arguments, the first a single character for the variable of differentiation, the second the expression you wish to differentiate. \ni.e. cargo run x \"x^x\"\nOnly first character of the first argument is taken.")
     }
 }
