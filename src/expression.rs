@@ -187,11 +187,6 @@ impl fmt::Display for Expression {
 
 //The methods are mostly different steps of the simplification process
 impl Expression {
-
-    pub fn real_expression(a: f64) -> Expression {
-        Expression::Lit(Term::Numeric(Literal::Real(a)))
-    }
-
     pub fn integer_expression(a: i128) -> Expression {
         Expression::Lit(Term::Numeric(Literal::Integer(a)))
     }
@@ -199,7 +194,13 @@ impl Expression {
     fn is_zero(&self) -> bool {
         match self {
             Expression::Lit(Term::Numeric(Literal::Integer(0))) => true,
-            Expression::Lit(Term::Numeric(Literal::Real(r))) if r == &0.0 => true,
+            Expression::Lit(Term::Numeric(Literal::Real(r))) => {
+                if let Some(Ordering::Equal) = r.partial_cmp(&0.0) {
+                    true
+                } else {
+                    false
+                }
+            }
             _ => false,
         }
     }
@@ -207,7 +208,27 @@ impl Expression {
     fn is_one(&self) -> bool {
         match self {
             Expression::Lit(Term::Numeric(Literal::Integer(1))) => true,
-            Expression::Lit(Term::Numeric(Literal::Real(r))) if r == &1.0 => true,
+            Expression::Lit(Term::Numeric(Literal::Real(r))) => {
+                if let Some(Ordering::Equal) = r.partial_cmp(&1.0) {
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    fn is_less_than_zero(&self) -> bool {
+        match self {
+            Expression::Lit(Term::Numeric(Literal::Integer(i))) => i < &0,
+            Expression::Lit(Term::Numeric(Literal::Real(r))) => {
+                if let Some(Ordering::Less) = r.partial_cmp(&0.0) {
+                    true
+                } else {
+                    false
+                }
+            }
             _ => false,
         }
     }
@@ -229,7 +250,7 @@ impl Expression {
     pub fn strip(self) -> Expression {
         match self {
             Expression::Unary(Operator::Paren, op) => op.strip(),
-	    Expression::Variadic(_,mut exprs) if exprs.len() == 1 => exprs.remove(0).strip(),
+            Expression::Variadic(_, mut exprs) if exprs.len() == 1 => exprs.remove(0).strip(),
             other => other.apply_on_others(Expression::strip),
         }
     }
@@ -672,15 +693,26 @@ impl Expression {
 
     fn neg_exponents_to_divs(self) -> Expression {
         match self {
-            Expression::Binary(Operator::Exp, a, b)
-                if *b == Expression::integer_expression(-1)
-                    || *b == Expression::real_expression(-1.0) =>
-            {
-                Expression::Binary(
-                    Operator::Div,
-                    Box::new(Expression::integer_expression(1)),
-                    Box::new(a.neg_exponents_to_divs()),
-                )
+            Expression::Binary(Operator::Exp, a, b) if b.is_less_than_zero() => {
+                if let Expression::Lit(Term::Numeric(lit)) = *b {
+                    let pow = Expression::Lit(Term::Numeric(Literal::apply(
+                        lit,
+                        Literal::Integer(-1),
+                        i128::mul,
+                        f64::mul,
+                    )));
+                    Expression::Binary(
+                        Operator::Div,
+                        Box::new(Expression::integer_expression(1)),
+                        Box::new(Expression::Binary(
+                            Operator::Exp,
+                            Box::new(a.neg_exponents_to_divs()),
+                            Box::new(pow),
+                        )),
+                    )
+                } else {
+                    Expression::Binary(Operator::Exp, a, b)
+                }
             }
             others => others.apply_on_others(Expression::neg_exponents_to_divs),
         }
@@ -691,7 +723,7 @@ impl Expression {
         let last_self = self.clone();
         let simplified = self
             .strip()
-	    .divs_to_neg_exponents()
+            .divs_to_neg_exponents()
             .factor_out_neg()
             .factor_out_sub()
             .flatten()
@@ -711,7 +743,7 @@ impl Expression {
             .simplify_exponents()
             .fold_constants()
             .distribute_exponents()
-	    .order();
+            .order();
 
         if simplified == last_self {
             simplified.neg_exponents_to_divs().present_phase_2()
@@ -720,23 +752,23 @@ impl Expression {
         }
     }
     fn present_phase_2(self) -> Expression {
-	let last_self = self.clone();
-	let simplified = self
-	    .strip()
-	    .remove_div_in_denom()
-	    .remove_div_in_numer()
-	    .remove_div_in_mul_node()
-	    .flatten()
-	    .simplify_exponents()
-	    .fold_constants();
-	    
+        let last_self = self.clone();
+        let simplified = self
+            .strip()
+            .remove_div_in_denom()
+            .remove_div_in_numer()
+            .remove_div_in_mul_node()
+            .flatten()
+            .simplify_exponents()
+            .fold_constants();
+
         if simplified == last_self {
             simplified.order()
         } else {
             simplified.present_phase_2()
         }
     }
-    
+
     //The reason all this other code exists. Recursively produces the derivate of a given expression with respect to its supplied argument
     pub fn derive(self, wrt: char) -> Expression {
         match self {
@@ -849,14 +881,11 @@ impl Expression {
 fn group_similar_by<A: Clone, F: Fn(&A, &A) -> bool>(vec: Vec<A>, f: F) -> Vec<Vec<A>> {
     let mut output = Vec::new();
     let first = vec.first();
-    match first.cloned() {
-        Some(first) => {
-            let (like_first, unlike_first) = vec.into_iter().partition(|x| f(x, &first));
-            let mut grouped = group_similar_by(unlike_first, f);
-            grouped.insert(0, like_first);
-            output = grouped;
-        }
-        None => (),
+    if let Some(first) = first.cloned() {
+        let (like_first, unlike_first) = vec.into_iter().partition(|x| f(x, &first));
+        let mut grouped = group_similar_by(unlike_first, f);
+        grouped.insert(0, like_first);
+        output = grouped;
     }
     output
 }
