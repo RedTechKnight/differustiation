@@ -1,9 +1,20 @@
 use crate::expression::{Expression, Literal, Operator, Term};
+use anyhow::anyhow;
+use nom::branch::alt;
+use nom::character::complete::{alpha1, char, digit1, one_of, space0};
+use nom::combinator::{map, verify,flat_map};
+use nom::error::ErrorKind;
+use nom::error::{ParseError};
+use nom::multi::many1;
+use nom::sequence::{delimited, pair, preceded, separated_pair, tuple};
+use nom::IResult;
 use std::collections::HashMap;
-use std::iter::Peekable;
-pub fn parse_expression(input: &str) -> Result<Expression, String> {
-    let tokens = tokenise(&mut input.chars().peekable());
-    parse_binary(&mut tokens.into_iter().peekable(), 0)
+
+pub fn parse_expression(input: &str) -> Result<Expression, anyhow::Error> {
+    match parse_binary(0)(&tokenise(input).unwrap().1) {
+        Ok((_, res)) => Ok(res),
+        Err(e) => Err(anyhow!("{}", e)),
+    }
 }
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
@@ -19,8 +30,14 @@ enum Token {
     Fun(String),
 }
 
-fn tokenise<I: Iterator<Item = char>>(input: &mut Peekable<I>) -> Vec<Token> {
-    let mut output = Vec::new();
+fn ws<'a, F: 'a, O, E: ParseError<&'a str>>(inner: F) -> impl Fn(&'a str) -> IResult<&'a str, O, E>
+where
+    F: Fn(&'a str) -> IResult<&'a str, O, E>,
+{
+    delimited(space0, inner, space0)
+}
+
+fn tokenise(input: &str) -> IResult<&str, Vec<Token>> {
     let token_map = vec![
         ('+', Token::Plus),
         ('-', Token::Minus),
@@ -32,167 +49,141 @@ fn tokenise<I: Iterator<Item = char>>(input: &mut Peekable<I>) -> Vec<Token> {
     ]
     .into_iter()
     .collect::<HashMap<char, Token>>();
-    while let Some(chr) = input.next() {
-        match chr {
-            chr if ['+', '-', '/', '*', '^', '(', ')'].contains(&chr) => {
-                output.push(token_map[&chr].clone())
-            }
-            chr if chr.is_digit(10) => {
-                let mut num = String::new();
-                let mut period = false;
-                num.push(chr);
-                while let Some(chr) = input.peek() {
-                    if chr.is_digit(10) {
-                        num.push(input.next().unwrap())
-                    } else if !period && chr.eq(&'.') {
-                        num.push(input.next().unwrap());
-                        period = true;
-                    } else {
-                        break;
-                    }
-                }
-                if let Ok(num) = num.parse::<i128>() {
-                    output.push(Token::Num(Literal::Integer(num)))
-                } else if let Ok(num) = num.parse::<f64>() {
-                    output.push(Token::Num(Literal::Real(num)))
-                }
-            }
-            chr if chr.is_alphabetic() => {
-                let mut word = String::new();
-                word.push(chr);
-                while let Some(chr) = input.peek() {
-                    if chr.is_alphabetic() {
-                        word.push(input.next().unwrap())
-                    } else {
-                        break;
-                    }
-                }
-                if word.len() == 1 {
-                    output.push(Token::Var(word.remove(0)))
-                } else {
-                    output.push(Token::Fun(word))
-                }
-            }
-            chr if [' '].contains(&chr) => (),
-            _ => (),
+
+    let operator = ws(map(one_of("+-*/()^"), move |x: char| token_map[&x].clone()));
+    let float = map(ws(separated_pair(digit1, char('.'), digit1)), |x| {
+        Token::Num(Literal::Real(format!("{}.{}", x.0, x.1).parse().unwrap()))
+    });
+    let int = map(ws(digit1), |x| {
+        Token::Num(Literal::Integer(x.parse().unwrap()))
+    });
+    let number = alt((float, int));
+    let var_fun = ws(map(alpha1, |x: &str| {
+        if x.len() == 1 {
+            Token::Var(x.chars().next().unwrap())
+        } else {
+            Token::Fun(x.to_string())
         }
-    }
-    output
+    }));
+    many1(alt((operator, number, var_fun)))(input)
 }
 
-fn parse_primary<I: Iterator<Item = Token>>(input: &mut Peekable<I>) -> Result<Expression, String> {
-    match input.next() {
-        Some(Token::LParen) => {
-            let inner_expr = parse_binary(input, 0)?;
-            match input.next() {
-                Some(Token::RParen) => Ok(Expression::Unary(Operator::Paren, Box::new(inner_expr))),
-                Some(other) => Err(format!("Expected ')', found {:?}", other)),
-                None => Err(format!("Expecteed ')', reached end of input")),
-            }
-        }
-        Some(Token::Num(lit)) => Ok(Expression::Lit(Term::Numeric(lit))),
-        Some(Token::Var(v)) => Ok(Expression::Lit(Term::Variable(v))),
-        Some(Token::Fun(f)) => match input.next() {
-            Some(Token::LParen) => {
-                let operand = parse_binary(input, 0)?;
-                match input.next() {
-                    Some(Token::RParen) => {
-                        Ok(Expression::Unary(Operator::Custom(f), Box::new(operand)))
-                    }
-                    Some(other) => Err(format!(
-                        "Expected ')' at end of function expression, found {:?}",
-                        other
-                    )),
-                    None => Err(format!(
-                        "Expected ')' at end of function expression, reached end of input."
-                    )),
-                }
-            }
-            Some(other) => Err(format!(
-                "Expected '(' after function name, found {:?}",
-                other
-            )),
-            None => Err(format!(
-                "Expected '(' after function name, reached end of input"
-            )),
+fn next<'a, T: 'a + Clone + std::fmt::Debug>(input: &[T]) -> IResult<&[T], T> {
+    if input.is_empty() {
+        Err(nom::Err::Error((input, ErrorKind::Eof)))
+    } else {
+        Ok((&input[1..], input[0].clone()))
+    }
+}
+
+fn paren(input: &[Token]) -> IResult<&[Token], Expression> {
+    delimited(
+        verify(next, |x| matches!(x, Token::LParen)),
+        parse_binary(0),
+        verify(next, |x| matches!(x, Token::RParen)),
+    )(input)
+}
+
+fn parse_primary(input: &[Token]) -> IResult<&[Token], Expression> {
+    let num = map(verify(next, |x| matches!(x, Token::Num(_))), |x| match x {
+        Token::Num(n) => Expression::Lit(Term::Numeric(n)),
+        _ => Expression::integer_expression(0),
+    });
+    let var = map(verify(next, |x| matches!(x, Token::Var(_))), |x| match x {
+        Token::Var(v) => Expression::Lit(Term::Variable(v)),
+        _ => Expression::integer_expression(0),
+    });
+    let fun = map(
+        pair(verify(next, |x| matches!(x, Token::Fun(_))), paren),
+        |(fun_tok, arg_expr)| match fun_tok {
+            Token::Fun(f) => Expression::Unary(Operator::Custom(f), Box::new(arg_expr)),
+            _ => Expression::integer_expression(0),
         },
-        other => Err(format!("Unexpected token: {:?}", other)),
-    }
+    );
+    alt((paren, fun, num, var))(input)
 }
 
-fn parse_unary<I: Iterator<Item = Token>>(input: &mut Peekable<I>) -> Result<Expression, String> {
-    match input.peek() {
-        Some(Token::Minus) => {
-            input.next();
-            let operand = parse_unary(input)?;
-            Ok(Expression::Unary(Operator::Neg, Box::new(operand)))
+fn parse_unary(input: &[Token]) -> IResult<&[Token], Expression> {
+    let negation = preceded(verify(next, |x| matches!(x, Token::Minus)), parse_unary);
+    alt((negation, parse_primary))(input)
+}
+
+fn parse_binary_right_assoc(input: &[Token]) -> IResult<&[Token], Expression> {
+    let expr = map(
+        separated_pair(
+            parse_unary,
+            verify(next, |x| matches!(x, Token::Exp)),
+            parse_binary_right_assoc,
+        ),
+        |(lhs, rhs)| Expression::Binary(Operator::Exp, Box::new(lhs), Box::new(rhs)),
+    );
+    alt((expr, parse_unary))(input)
+}
+
+fn next_op(prec: i32) -> impl Fn(&[Token]) -> IResult<&[Token], Expression> {
+    move |input: &[Token]| {
+        if prec == 0 {
+            parse_binary(prec + 1)(input)
+        } else {
+            parse_binary_right_assoc(input)
         }
-        Some(_) => parse_primary(input),
-        None => Err(format!("Expected unary expression, reached end of input.")),
     }
 }
 
-fn parse_binary_right_assoc<I: Iterator<Item = Token>>(
-    input: &mut Peekable<I>,
-) -> Result<Expression, String> {
-    let lhs = parse_unary(input)?;
-    match input.peek() {
-        Some(Token::Exp) => {
-            input.next();
-            let rhs = parse_binary_right_assoc(input)?;
-            Ok(Expression::Binary(
-                Operator::Exp,
-                Box::new(lhs),
-                Box::new(rhs),
-            ))
-        }
-        _ => Ok(lhs),
-    }
-}
-
-fn left_assoc<I: Iterator<Item = Token>>(
-    lhs: Expression,
-    input: &mut Peekable<I>,
-    precedence: i32,
-) -> Result<Expression, String> {
-    let operators = vec![
-        (0, vec![Token::Plus, Token::Minus]),
-        (1, vec![Token::Mul, Token::Div]),
-    ]
-    .into_iter()
-    .collect::<HashMap<i32, Vec<Token>>>();
-    let op = |tok: Token| match tok {
+fn assoc((lhs,prec) : (Expression,i32)) -> impl Fn(&[Token]) -> IResult<&[Token],Expression> {
+    move |input: &[Token]| {
+	let get_op = |token: Token| match token {
         Token::Plus => Operator::Add,
         Token::Minus => Operator::Sub,
         Token::Mul => Operator::Mul,
-        _ => Operator::Div,
+        Token::Div => Operator::Div,
+        _ => panic!(),
     };
-    match input.peek().cloned() {
-        Some(tok) if operators[&precedence].contains(&tok) => {
-            input.next();
-            let rhs = if precedence == 0 {
-                parse_binary(input, precedence + 1)?
-            } else {
-                parse_binary_right_assoc(input)?
-            };
-            left_assoc(
-                Expression::Binary(op(tok), Box::new(lhs), Box::new(rhs)),
-                input,
-                precedence,
-            )
-        }
-        _ => Ok(lhs),
+    let bin_op = |prec: i32| match prec {
+        0 => vec![Token::Plus, Token::Minus],
+        1 => vec![Token::Mul, Token::Div],
+        _ => vec![],
+    };
+	let expr = 
+	map(
+            tuple((
+                |input| Ok((input,lhs.clone())),
+                verify(next, |x| matches!(x, x if bin_op(prec).contains(&x))),
+                next_op(prec),
+            )),
+            |(lhs, op, rhs)| Expression::Binary(get_op(op), Box::new(lhs), Box::new(rhs)),
+        );
+	let recurse = flat_map(map(expr,|res| (res,prec)),assoc);
+	let x = alt((recurse,|input| Ok((input,lhs.clone()))))(input);
+	x
     }
 }
 
-fn parse_binary<I: Iterator<Item = Token>>(
-    input: &mut Peekable<I>,
-    precedence: i32,
-) -> Result<Expression, String> {
-    let lhs = if precedence == 0 {
-        parse_binary(input, precedence + 1)?
-    } else {
-        parse_binary_right_assoc(input)?
+fn bin_expr(prec: i32) -> impl Fn(&[Token]) -> IResult<&[Token], Expression> {
+    let get_op = |token: Token| match token {
+        Token::Plus => Operator::Add,
+        Token::Minus => Operator::Sub,
+        Token::Mul => Operator::Mul,
+        Token::Div => Operator::Div,
+        _ => panic!(),
     };
-    left_assoc(lhs, input, precedence)
+    let bin_op = |prec: i32| match prec {
+        0 => vec![Token::Plus, Token::Minus],
+        1 => vec![Token::Mul, Token::Div],
+        _ => vec![],
+    };
+    move |input: &[Token]| {
+        map(
+            tuple((
+                next_op(prec),
+                verify(next, |x| matches!(x, x if bin_op(prec).contains(&x))),
+                next_op(prec),
+            )),
+            |(lhs, op, rhs)| Expression::Binary(get_op(op), Box::new(lhs), Box::new(rhs)),
+        )(input)
+    }
+}
+
+fn parse_binary(prec: i32) -> impl Fn(&[Token]) -> IResult<&[Token], Expression> {
+    move |input: &[Token]| alt((flat_map(map(bin_expr(prec),|res| (res,prec)),assoc),next_op(prec)))(input)
 }

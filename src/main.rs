@@ -5,6 +5,7 @@ mod expression;
 mod parser;
 use clap::{App, Arg};
 use parser::parse_expression;
+use anyhow;
 fn main() {
     let matches = setup_arg_parser().get_matches();
     let wrt = matches.value_of("var").unwrap().chars().next().unwrap();
@@ -12,7 +13,7 @@ fn main() {
     let expr = parse_expression(expr_str);
     match expr {
         Ok(expr) => println!("{}", expr.simplify().derive(wrt).present()),
-        Err(err) => println!("Failed to parse expression: {}", err),
+        Err(err) => println!("Failed to parse expression: {:?}", err),
     }
 }
 
