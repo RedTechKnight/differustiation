@@ -37,22 +37,12 @@ impl Literal {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq,PartialOrd)]
 pub enum Term {
     Numeric(Literal),
     Variable(char),
 }
 
-impl PartialOrd for Term {
-    fn partial_cmp(&self, other: &Term) -> Option<Ordering> {
-        match (self, other) {
-            (Term::Numeric(_), Term::Variable(_)) => Some(Ordering::Less),
-            (Term::Variable(_), Term::Numeric(_)) => Some(Ordering::Greater),
-            (Term::Numeric(a), Term::Numeric(b)) => a.partial_cmp(b),
-            (Term::Variable(a), Term::Variable(b)) => a.partial_cmp(b),
-        }
-    }
-}
 
 impl fmt::Display for Term {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
