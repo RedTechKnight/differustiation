@@ -9,18 +9,6 @@ use nom::multi::many1;
 use nom::sequence::{delimited, pair, preceded, separated_pair, tuple};
 use nom::IResult;
 
-macro_rules! map(
-    { $($key:expr => $value:expr),+ } => {
-        {
-            let mut m = ::std::collections::HashMap::new();
-            $(
-                m.insert($key, $value);
-            )+
-            m
-        }
-     };
-);
-
 pub fn parse_expression(input: &str) -> anyhow::Result<Expression> {
     match tokenise(input) {
         Ok((_, tokens)) => match all_consuming(parse_binary(0))(&tokens) {
@@ -51,18 +39,21 @@ where
     delimited(space0, inner, space0)
 }
 
-fn tokenise(input: &str) -> IResult<&str, Vec<Token>> {
-    let token_map = map! {
+fn get_token(c: char) -> Token {
+    match c {
         '+' => Token::Plus,
-    '-' => Token::Minus,
-        '/'=> Token::Div,
-        '*'=> Token::Mul,
-        '^'=> Token::Exp,
-        '('=> Token::LParen,
-        ')'=> Token::RParen
-    };
+        '-' => Token::Minus,
+        '/' => Token::Div,
+        '*' => Token::Mul,
+        '^' => Token::Exp,
+        '(' => Token::LParen,
+        ')' => Token::RParen,
+        _ => Token::Plus,
+    }
+}
 
-    let operator = ws(map(one_of("+-*/()^"), move |x: char| token_map[&x].clone()));
+fn tokenise(input: &str) -> IResult<&str, Vec<Token>> {
+    let operator = ws(map(one_of("+-*/()^"), get_token));
     let float = map(ws(separated_pair(digit1, char('.'), digit1)), |x| {
         Token::Num(Literal::Real(format!("{}.{}", x.0, x.1).parse().unwrap()))
     });
@@ -80,12 +71,16 @@ fn tokenise(input: &str) -> IResult<&str, Vec<Token>> {
     many1(alt((operator, number, var_fun)))(input)
 }
 
-fn next<'a, T: 'a + Clone + std::fmt::Debug>(input: &[T]) -> IResult<&[T], T> {
+fn next<'a, T: 'a + Clone>(input: &[T]) -> IResult<&[T], T> {
     if input.is_empty() {
         Err(nom::Err::Error((input, ErrorKind::Eof)))
     } else {
         Ok((&input[1..], input[0].clone()))
     }
+}
+
+fn pure<'a, T: 'a + Clone, U>(x: &'a T) -> impl Fn(&[U]) -> IResult<&[U], T> + 'a {
+    move |input: &[U]| Ok((input, x.clone()))
 }
 
 fn paren(input: &[Token]) -> IResult<&[Token], Expression> {
@@ -156,37 +151,37 @@ fn get_op(token: &Token) -> Operator {
     }
 }
 
+fn expected_op(prec: i32, token: &Token) -> bool {
+    if prec == 0 {
+        matches!(token, Token::Plus | Token::Minus)
+    } else {
+        matches!(token, Token::Mul | Token::Div)
+    }
+}
+
 fn left_assoc(
     (lhs, prec): (Expression, i32),
 ) -> impl Fn(&[Token]) -> IResult<&[Token], Expression> {
     move |input: &[Token]| {
-        let bin_op = map! {
-            0 => vec![Token::Plus, Token::Minus],
-            1 => vec![Token::Mul, Token::Div]
-        };
         let expr = map(
             tuple((
-                |input| Ok((input, lhs.clone())),
-                verify(next, move |x| matches!(x, x if bin_op[&prec].contains(&x))),
+                pure(&lhs),
+                verify(next, |x| expected_op(prec, &x)),
                 higher_expr(prec),
             )),
             |(lhs, op, rhs)| Expression::Binary(get_op(&op), Box::new(lhs), Box::new(rhs)),
         );
         let recurse = flat_map(map(expr, |res| (res, prec)), left_assoc);
-        alt((recurse, |input| Ok((input, lhs.clone()))))(input)
+        alt((recurse, pure(&lhs)))(input)
     }
 }
 
 fn binary_expr(prec: i32) -> impl Fn(&[Token]) -> IResult<&[Token], Expression> {
-    let bin_op = map! {
-        0 => vec![Token::Plus, Token::Minus],
-        1 => vec![Token::Mul, Token::Div]
-    };
     move |input: &[Token]| {
         map(
             tuple((
                 higher_expr(prec),
-                verify(next, |x| matches!(x, x if bin_op[&prec].contains(&x))),
+                verify(next, |x| expected_op(prec, x)),
                 higher_expr(prec),
             )),
             |(lhs, op, rhs)| Expression::Binary(get_op(&op), Box::new(lhs), Box::new(rhs)),
