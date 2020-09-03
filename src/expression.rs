@@ -23,26 +23,32 @@ impl fmt::Display for Literal {
 impl Literal {
     //It's meant to make to make it easier use binary functions on either.
     pub fn apply<F: Fn(i128, i128) -> i128, G: Fn(f64, f64) -> f64>(
-        a: Literal,
+        self,
         b: Literal,
         f: F,
         g: G,
     ) -> Literal {
-        match (a, b) {
+        match (self, b) {
             (Literal::Integer(a), Literal::Integer(b)) => Literal::Integer(f(a, b)),
             (Literal::Real(a), Literal::Integer(b)) => Literal::Real(g(a, b as f64)),
             (Literal::Integer(a), Literal::Real(b)) => Literal::Real(g(a as f64, b)),
             (Literal::Real(a), Literal::Real(b)) => Literal::Real(g(a, b)),
         }
     }
+
+    pub fn compare(self, rhs_i: i128, rhs_r: f64) -> Option<Ordering> {
+        match self {
+            Literal::Integer(lhs) => Some(lhs.cmp(&rhs_i)),
+            Literal::Real(lhs) => lhs.partial_cmp(&rhs_r),
+        }
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq,PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub enum Term {
     Numeric(Literal),
     Variable(char),
 }
-
 
 impl fmt::Display for Term {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -181,46 +187,19 @@ impl Expression {
         Expression::Lit(Term::Numeric(Literal::Integer(a)))
     }
 
-    fn is_zero(&self) -> bool {
+    fn numeric_cmp(&self, rhs_i: i128, rhs_f: f64, ord: Ordering) -> bool {
         match self {
-            Expression::Lit(Term::Numeric(Literal::Integer(0))) => true,
-            Expression::Lit(Term::Numeric(Literal::Real(r))) => {
-                if let Some(Ordering::Equal) = r.partial_cmp(&0.0) {
-                    true
-                } else {
-                    false
-                }
-            }
+            Expression::Lit(Term::Numeric(lit)) => lit.compare(rhs_i, rhs_f) == Some(ord),
             _ => false,
         }
+    }
+
+    fn is_zero(&self) -> bool {
+        self.numeric_cmp(0, 0.0, Ordering::Equal)
     }
 
     fn is_one(&self) -> bool {
-        match self {
-            Expression::Lit(Term::Numeric(Literal::Integer(1))) => true,
-            Expression::Lit(Term::Numeric(Literal::Real(r))) => {
-                if let Some(Ordering::Equal) = r.partial_cmp(&1.0) {
-                    true
-                } else {
-                    false
-                }
-            }
-            _ => false,
-        }
-    }
-
-    fn is_less_than_zero(&self) -> bool {
-        match self {
-            Expression::Lit(Term::Numeric(Literal::Integer(i))) => i < &0,
-            Expression::Lit(Term::Numeric(Literal::Real(r))) => {
-                if let Some(Ordering::Less) = r.partial_cmp(&0.0) {
-                    true
-                } else {
-                    false
-                }
-            }
-            _ => false,
-        }
+        self.numeric_cmp(1, 1.0, Ordering::Equal)
     }
 
     //Applies function on the remaining cases of an Expression, meant to help cut down on boilerplate.
@@ -380,7 +359,6 @@ impl Expression {
                             )
                             .remove_div_in_mul_node()
                         } else {
-                            //This shouldn't be possible to reach
                             Expression::Variadic(Operator::Mul, exprs)
                         }
                     }
@@ -506,9 +484,6 @@ impl Expression {
                                     (coeffs_acc, terms_x)
                                 },
                             );
-                            //let initial = if terms.is_empty() {Expression::integer_expression(0)} else {Expression::integer_expression(1)};
-                            //let op_i128 = if terms.is_empty() {Expression::integer_expre
-
                             terms.push(coeffs.into_iter().fold(
                                 Expression::integer_expression(0),
                                 |acc, expr| match (acc, expr) {
@@ -603,17 +578,17 @@ impl Expression {
                     Operator::Add => f64::add,
                     _ => f64::mul,
                 };
-                let result = consts.into_iter().fold(initial, |acc, x| match (acc, x) {
-                    (Expression::Lit(Term::Numeric(a)), Expression::Lit(Term::Numeric(b))) => {
-                        Expression::Lit(Term::Numeric(Literal::apply(a, b, op_i128, op_f64)))
-                    }
-                    (acc, _) => acc,
-                });
+                let result = consts
+                    .into_iter()
+                    .fold(initial.clone(), |acc, x| match (acc, x) {
+                        (Expression::Lit(Term::Numeric(a)), Expression::Lit(Term::Numeric(b))) => {
+                            Expression::Lit(Term::Numeric(Literal::apply(a, b, op_i128, op_f64)))
+                        }
+                        (acc, _) => acc,
+                    });
                 if vars.is_empty() {
                     result
-                } else if (operator == Operator::Add && result.is_zero())
-                    || (operator == Operator::Mul && result.is_one())
-                {
+                } else if result == initial {
                     if vars.len() == 1 {
                         vars.remove(0)
                     } else {
@@ -683,10 +658,9 @@ impl Expression {
 
     fn neg_exponents_to_divs(self) -> Expression {
         match self {
-            Expression::Binary(Operator::Exp, a, b) if b.is_less_than_zero() => {
+            Expression::Binary(Operator::Exp, a, b) if b.numeric_cmp(0, 0.0, Ordering::Less) => {
                 if let Expression::Lit(Term::Numeric(lit)) = *b {
-                    let pow = Expression::Lit(Term::Numeric(Literal::apply(
-                        lit,
+                    let pow = Expression::Lit(Term::Numeric(lit.apply(
                         Literal::Integer(-1),
                         i128::mul,
                         f64::mul,
@@ -701,7 +675,11 @@ impl Expression {
                         )),
                     )
                 } else {
-                    Expression::Binary(Operator::Exp, a, b)
+                    Expression::Binary(
+                        Operator::Exp,
+                        Box::new(a.neg_exponents_to_divs()),
+                        Box::new(b.neg_exponents_to_divs()),
+                    )
                 }
             }
             others => others.apply_on_others(Expression::neg_exponents_to_divs),
